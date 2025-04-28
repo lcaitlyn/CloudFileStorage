@@ -1,17 +1,12 @@
 package edu.lcaitlyn.cloudfilestorage.repository;
 
 import edu.lcaitlyn.cloudfilestorage.models.User;
+import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
-import java.util.List;
+import java.util.Optional;
 
 @Repository
-public interface UserRepository {
-    public void save(User user);
-
-    public User findById(long id);
-
-    public User findByUsername(String username);
-
-    public List<User> findAll();
+public interface UserRepository extends JpaRepository<User, Long> {
+    Optional<User> findByUsername(String username);
 }

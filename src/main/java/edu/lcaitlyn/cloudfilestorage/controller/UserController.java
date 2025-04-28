@@ -3,13 +3,12 @@ package edu.lcaitlyn.cloudfilestorage.controller;
 import edu.lcaitlyn.cloudfilestorage.models.User;
 import edu.lcaitlyn.cloudfilestorage.service.UserService;
 import lombok.AllArgsConstructor;
-import org.springframework.stereotype.Controller;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Optional;
 
 @RestController
 @RequestMapping("/user")
@@ -18,13 +17,28 @@ public class UserController {
 
     private final UserService userService;
 
+    @PostMapping("/add")
+    public ResponseEntity<User> create(@RequestBody User user) {
+        userService.save(user);
+        return new ResponseEntity<>(user, HttpStatus.CREATED);
+    }
+
     @GetMapping
-    public List<User> findAll() {
-        return userService.findAll();
+    public ResponseEntity<List<User>> findAll() {
+        List<User> users = userService.findAll();
+        return ResponseEntity.ok(users);
     }
 
     @GetMapping("/{id}")
-    public User findById(@PathVariable long id) {
-        return userService.findById(id);
+    public ResponseEntity<User> findById(@PathVariable long id) {
+        Optional<User> user = userService.findById(id);
+        return ResponseEntity.of(user);
     }
+
+    @GetMapping("/username/{username}")
+    public ResponseEntity<User> findByUsername(@PathVariable String username) {
+        Optional<User> user = userService.findByUsername(username);
+        return ResponseEntity.of(user);
+    }
+
 }
