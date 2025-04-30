@@ -1,90 +1,87 @@
 package edu.lcaitlyn.cloudfilestorage.controller;
 
+import edu.lcaitlyn.cloudfilestorage.DTO.ErrorResponseDTO;
+import edu.lcaitlyn.cloudfilestorage.DTO.UserRequestDTO;
+import edu.lcaitlyn.cloudfilestorage.DTO.UserResponseDTO;
 import edu.lcaitlyn.cloudfilestorage.exception.UserAlreadyExist;
 import edu.lcaitlyn.cloudfilestorage.exception.UserNotFoundException;
 import edu.lcaitlyn.cloudfilestorage.models.User;
 import edu.lcaitlyn.cloudfilestorage.service.UserService;
+import edu.lcaitlyn.cloudfilestorage.utils.ControllerUtils;
+import edu.lcaitlyn.cloudfilestorage.utils.ErrorResponseUtil;
 import jakarta.servlet.http.HttpSession;
 import lombok.AllArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.authentication.AnonymousAuthenticationToken;
+import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
-import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.stereotype.Controller;
-import org.springframework.ui.Model;
-import org.springframework.web.bind.annotation.ExceptionHandler;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.security.web.context.HttpSessionSecurityContextRepository;
+import org.springframework.web.bind.annotation.*;
 
-import java.util.Collections;
 import java.util.Optional;
 
-@Controller
+@RestController
 @AllArgsConstructor
+@RequestMapping("/auth")
 public class AuthController {
 
     private final UserService userService;
 
-    @GetMapping("/login")
-    public String login(HttpSession session) {
-        if (session.getAttribute("user") != null)  return "redirect:/";
+    private final AuthenticationManager authenticationManager;
 
-        return "login";
-    }
-
-    @PostMapping("/login")
-    public String login(@RequestParam String username, @RequestParam String password, HttpSession session) {
-        if (session.getAttribute("user") != null)  return "redirect:/";
-
-        Optional<User> user = userService.authenticate(username, password);
-        if (user.isPresent()) {
-            Authentication auth = new UsernamePasswordAuthenticationToken(
-                    user.get(), password, Collections.singletonList(new SimpleGrantedAuthority("ADMIN"))
-            );
-            SecurityContextHolder.getContext().setAuthentication(auth);
-            session.setAttribute("user", user.get().getUsername());
+    @PostMapping("/sign-in")
+    public ResponseEntity<?> login(@RequestBody UserRequestDTO userRequestDTO, HttpSession session) {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (ControllerUtils.isAuthenticated(auth)) {
+            return ErrorResponseUtil.print("User already authenticated", HttpStatus.BAD_REQUEST);
         }
-        return "redirect:/";
+
+        String username = userRequestDTO.getUsername();
+        String password = userRequestDTO.getPassword();
+        Optional<User> user = userService.authenticate(username, password);
+
+        if (user.isEmpty()) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        }
+
+        Authentication authToken = new UsernamePasswordAuthenticationToken(username, password);
+        Authentication authenticated = authenticationManager.authenticate(authToken);
+        SecurityContextHolder.getContext().setAuthentication(authenticated);
+        session.setAttribute(HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY, SecurityContextHolder.getContext());
+
+        UserResponseDTO responseDTO = UserResponseDTO.builder().username(user.get().getUsername()).build();
+        return ResponseEntity.ok(responseDTO);
     }
 
-    @ExceptionHandler
-    public ResponseEntity<String> handleUserNotFoundException(UserNotFoundException ex) {
-        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(ex.getMessage());
-    }
+    @PostMapping("/sign-up")
+    public ResponseEntity<?> register(@RequestBody UserRequestDTO userRequestDTO) {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (ControllerUtils.isAuthenticated(auth)) {
+            return ErrorResponseUtil.print("User already authenticated", HttpStatus.BAD_REQUEST);
+        }
 
-    @ExceptionHandler
-    public ResponseEntity<String> handeBadCredentialsException(BadCredentialsException ex) {
-        return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(ex.getMessage());
-    }
-
-    @GetMapping("/register")
-    public String register(HttpSession session) {
-        if (session.getAttribute("user") != null)  return "redirect:/";
-
-        return "register";
-    }
-
-    @PostMapping("/register")
-    public String register(@RequestParam String username, @RequestParam String password, HttpSession session) {
-        if (session.getAttribute("user") != null)  return "redirect:/";
+        String username = userRequestDTO.getUsername();
+        String password = userRequestDTO.getPassword();
 
         userService.save(new User(username, password));
-        return login(username, password, session);
+
+        UserResponseDTO responseDTO = UserResponseDTO.builder().username(username).build();
+        return ResponseEntity.status(HttpStatus.CREATED).body(responseDTO);
     }
 
-    @ExceptionHandler
-    public ResponseEntity<String> handeUserAlreadyExistException(UserAlreadyExist ex) {
-        return ResponseEntity.status(HttpStatus.CONFLICT).body(ex.getMessage());
-    }
+    @PostMapping("/sign-out")
+    public ResponseEntity<?> logout(HttpSession session) {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (!ControllerUtils.isAuthenticated(auth)) {
+            return ErrorResponseUtil.print("User are not authenticated", HttpStatus.UNAUTHORIZED);
+        }
 
-    @GetMapping("/logout")
-    public String logout(HttpSession session) {
         SecurityContextHolder.clearContext();
-        session.removeAttribute("user");
-        return "redirect:/";
+        session.removeAttribute(HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY);
+        return ResponseEntity.status(HttpStatus.NO_CONTENT).build();
     }
 }
