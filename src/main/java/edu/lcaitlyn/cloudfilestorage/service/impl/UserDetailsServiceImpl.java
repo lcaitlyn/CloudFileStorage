@@ -1,4 +1,4 @@
-package edu.lcaitlyn.cloudfilestorage.service;
+package edu.lcaitlyn.cloudfilestorage.service.impl;
 
 import edu.lcaitlyn.cloudfilestorage.models.User;
 import edu.lcaitlyn.cloudfilestorage.repository.UserRepository;

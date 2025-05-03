@@ -1,17 +1,15 @@
-package edu.lcaitlyn.cloudfilestorage.service;
+package edu.lcaitlyn.cloudfilestorage.service.impl;
 
 import edu.lcaitlyn.cloudfilestorage.exception.UserAlreadyExist;
 import edu.lcaitlyn.cloudfilestorage.exception.UserNotFoundException;
 import edu.lcaitlyn.cloudfilestorage.models.User;
 import edu.lcaitlyn.cloudfilestorage.repository.UserRepository;
+import edu.lcaitlyn.cloudfilestorage.service.UserService;
 import lombok.AllArgsConstructor;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
-import java.io.NotActiveException;
 import java.util.*;
 
 @Service
