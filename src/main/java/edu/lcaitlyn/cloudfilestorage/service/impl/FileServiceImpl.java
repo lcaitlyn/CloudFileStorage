@@ -36,7 +36,7 @@ public class FileServiceImpl implements FileService {
     public List<ResourceResponseDTO> uploadFile(ResourceRequestDTO request) throws IOException {
         User user = request.getUser();
         String path = request.getPath();
-        MultipartFile [] files = request.getFiles();
+        MultipartFile[] files = request.getFiles();
 
         String prefix = addUserPrefix(user.getId(), path);
         System.out.println("FileServiceImpl: uploadFile: path = " + path + " prefix = " + prefix);
@@ -51,7 +51,8 @@ public class FileServiceImpl implements FileService {
 
                 // если нашел такой файл выйдет ошибка ебать
                 throw new ResponseStatusException(HttpStatus.CONFLICT, "File \"" + file.getOriginalFilename() + "\" already exists.");
-            } catch (NoSuchKeyException e) {}
+            } catch (NoSuchKeyException e) {
+            }
         }
 
         List<ResourceResponseDTO> response = new ArrayList<>();
@@ -92,9 +93,8 @@ public class FileServiceImpl implements FileService {
 
         HeadObjectResponse response = s3.headObject(objectRequest);
 
-        String fileName = path.substring(path.lastIndexOf("/") + 1);
         return ResourceResponseDTO.builder()
-                .name(fileName)
+                .name(extractNameFromKey(key))
                 .path(path)
                 .size(response.contentLength())
                 .resourceType(ResourceType.FILE)
@@ -128,15 +128,11 @@ public class FileServiceImpl implements FileService {
         }
 
         for (CommonPrefix c : response.commonPrefixes()) {
-            String directory = c.prefix().substring(prefix.length());
-            String[] parts = directory.split("/");
-            String name = parts[parts.length - 1];
-
             result.add(ResourceResponseDTO.builder()
-                            .name(name + "/")
-                            .path(request.getPath())
-                            .resourceType(ResourceType.DIRECTORY)
-                            .build());
+                    .name(extractPathFromKey(path))
+                    .path(request.getPath())
+                    .resourceType(ResourceType.DIRECTORY)
+                    .build());
         }
 
         for (S3Object o : response.contents()) {
@@ -150,7 +146,7 @@ public class FileServiceImpl implements FileService {
             }
 
             result.add(ResourceResponseDTO.builder()
-                    .name(relativePath)
+                    .name(extractNameFromKey(relativePath))
                     .path(request.getPath())
                     .size(o.size())
                     .resourceType(ResourceType.FILE)
@@ -178,7 +174,7 @@ public class FileServiceImpl implements FileService {
             s3.putObject(objectRequest, RequestBody.empty());
 
             return ResourceResponseDTO.builder()
-                    .name(path)
+                    .name(extractNameFromKey(path))
                     .resourceType(ResourceType.DIRECTORY)
                     .path(path)
                     .build();
@@ -195,10 +191,10 @@ public class FileServiceImpl implements FileService {
         String prefix = addUserPrefix(user.getId(), path);
 
         boolean isFolder = s3.listObjectsV2(ListObjectsV2Request.builder()
-                        .bucket(s3Properties.getBucket())
-                        .prefix(prefix + "/")
-                        .maxKeys(1)
-                        .build()
+                .bucket(s3Properties.getBucket())
+                .prefix(prefix + "/")
+                .maxKeys(1)
+                .build()
         ).hasContents();
 
         if (isFolder) {
@@ -242,8 +238,87 @@ public class FileServiceImpl implements FileService {
                 .build());
     }
 
+    // todo мб реализовать чтобы он и искал не только пустые папки
+    @Override
+    public List<ResourceResponseDTO> findResource(ResourceRequestDTO request) {
+        User user = request.getUser();
+        String query = request.getPath().toLowerCase();
+
+        String prefix = addUserPrefix(user.getId(), "/");
+        System.out.println("FileServiceImpl: findResource: path = " + prefix + " query = " + query);
+
+        List<ResourceResponseDTO> result = new ArrayList<>();
+
+        String continuationToken = null;
+
+        while (true) {
+            ListObjectsV2Request.Builder builder = ListObjectsV2Request.builder()
+                    .bucket(s3Properties.getBucket())
+                    .prefix(prefix)
+                    .maxKeys(1000);
+
+            if (continuationToken != null) {
+                builder = builder.continuationToken(continuationToken);
+            }
+
+            ListObjectsV2Response response = s3.listObjectsV2(builder.build());
+
+            for (S3Object o : response.contents()) {
+                String key = o.key();
+                String name = extractNameFromKey(key);
+
+                if (!name.toLowerCase().contains(query)) {
+                    continue;
+                }
+
+                boolean isDirectory = key.endsWith("/");
+                String path = extractPathFromKey(key);
+
+                result.add(ResourceResponseDTO.builder()
+                        .name(name)
+                        .resourceType((isDirectory ? ResourceType.DIRECTORY : ResourceType.FILE))
+                        .path(path)
+                        .size(o.size())
+                        .build());
+            }
+
+            if (!response.isTruncated()) break;
+
+            continuationToken = response.nextContinuationToken();
+        }
+
+        return result;
+    }
+
     private String addUserPrefix(Long userId, String path) {
         String prefix = String.format(pathPrefixFormat, userId);
         return prefix + path;
+    }
+
+    private String extractNameFromKey(String key) {
+        if (key.endsWith("/")) {
+            key = key.substring(0, key.length() - 1);
+        }
+
+        int lastSlash = key.lastIndexOf('/');
+        if (lastSlash < 0) {
+            return ""; // это root-папка, имя пустое
+        }
+
+        return key.substring(lastSlash + 1);
+    }
+
+    private String extractPathFromKey(String key) {
+        if (!key.contains("/")) {
+            return "/"; // это root
+        }
+
+        int lastSlash = key.lastIndexOf('/');
+        String rawPath = key.substring(0, lastSlash + 1); // включая слэш
+
+        // Убираем префикс пользователя (например, "user-9-files/")
+        String cleaned = rawPath.replaceFirst("^user-\\d+-files/", "");
+
+        return cleaned.isEmpty() ? "/" : "/" + cleaned;
     }
 }

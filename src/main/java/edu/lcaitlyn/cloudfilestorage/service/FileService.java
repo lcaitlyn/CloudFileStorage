@@ -23,4 +23,6 @@ public interface FileService {
     ResourceResponseDTO createDirectory(ResourceRequestDTO request);
 
     void deleteResourceOrDirectory(ResourceRequestDTO request) throws NoSuchKeyException;
+
+    List<ResourceResponseDTO> findResource(ResourceRequestDTO request);
 }

@@ -112,4 +112,27 @@ public class ResourceController {
             return ErrorResponseUtils.print("File " + path + " not found", HttpStatus.NOT_FOUND);
         }
     }
+
+    @GetMapping("/search")
+    public ResponseEntity<?> searchResource(@RequestParam String query, @AuthenticationPrincipal UserDetails userDetails) throws FileNotFoundException {
+        if (userDetails == null) {
+            return ErrorResponseUtils.print("User not logged in", HttpStatus.UNAUTHORIZED);
+        }
+
+        if (query == null || query.isEmpty()) {
+            return ErrorResponseUtils.print("Query string is empty", HttpStatus.BAD_REQUEST);
+        }
+
+        Optional<User> user = userService.findByUsername(userDetails.getUsername());
+        if (user.isEmpty()) {
+            return ErrorResponseUtils.print("User not found", HttpStatus.NOT_FOUND);
+        }
+
+        List<ResourceResponseDTO> response = fileService.findResource(ResourceRequestDTO.builder()
+                .user(user.get())
+                .path(query)
+                .build());
+
+        return ResponseEntity.status(HttpStatus.OK).body(response);
+    }
 }
