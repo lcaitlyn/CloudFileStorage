@@ -1,5 +1,6 @@
 package edu.lcaitlyn.cloudfilestorage.service;
 
+import edu.lcaitlyn.cloudfilestorage.DTO.MoveResourceRequestDTO;
 import edu.lcaitlyn.cloudfilestorage.DTO.ResourceResponseDTO;
 import edu.lcaitlyn.cloudfilestorage.DTO.ResourceRequestDTO;
 import org.springframework.stereotype.Service;
@@ -16,8 +17,6 @@ public interface FileService {
 
     ResourceResponseDTO getFile(ResourceRequestDTO request) throws FileNotFoundException;
 
-    ResourceResponseDTO download(ResourceRequestDTO request);
-
     List<ResourceResponseDTO> getDirectory(ResourceRequestDTO request);
 
     ResourceResponseDTO createDirectory(ResourceRequestDTO request);
@@ -25,4 +24,8 @@ public interface FileService {
     void deleteResourceOrDirectory(ResourceRequestDTO request) throws NoSuchKeyException;
 
     List<ResourceResponseDTO> findResource(ResourceRequestDTO request);
+
+    ResourceResponseDTO moveResource(MoveResourceRequestDTO request);
+
+    byte [] download(ResourceRequestDTO request) throws NoSuchKeyException, IOException;
 }

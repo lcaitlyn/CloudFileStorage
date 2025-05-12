@@ -54,6 +54,6 @@ public class ExceptionController {
 
     @ExceptionHandler
     public ResponseEntity<?> handeResponseStatusException(ResponseStatusException ex) {
-        return ErrorResponseUtils.print(ex.getMessage(), HttpStatus.CONFLICT);
+        return ErrorResponseUtils.print(ex.getReason(), ex.getStatusCode());
     }
 }

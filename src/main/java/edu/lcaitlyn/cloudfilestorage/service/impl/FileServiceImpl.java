@@ -1,5 +1,6 @@
 package edu.lcaitlyn.cloudfilestorage.service.impl;
 
+import edu.lcaitlyn.cloudfilestorage.DTO.MoveResourceRequestDTO;
 import edu.lcaitlyn.cloudfilestorage.DTO.ResourceResponseDTO;
 import edu.lcaitlyn.cloudfilestorage.DTO.ResourceRequestDTO;
 import edu.lcaitlyn.cloudfilestorage.config.S3Properties;
@@ -7,20 +8,23 @@ import edu.lcaitlyn.cloudfilestorage.enums.ResourceType;
 import edu.lcaitlyn.cloudfilestorage.exception.DirectoryNotFound;
 import edu.lcaitlyn.cloudfilestorage.models.User;
 import edu.lcaitlyn.cloudfilestorage.service.FileService;
-import edu.lcaitlyn.cloudfilestorage.utils.ErrorResponseUtils;
 import lombok.AllArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
+import software.amazon.awssdk.core.ResponseInputStream;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.*;
 
+import java.io.ByteArrayOutputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 
 @Service
 @AllArgsConstructor
@@ -40,7 +44,6 @@ public class FileServiceImpl implements FileService {
 
         String prefix = addUserPrefix(user.getId(), path);
         System.out.println("FileServiceImpl: uploadFile: path = " + path + " prefix = " + prefix);
-
 
         for (MultipartFile file : files) {
             try {
@@ -102,11 +105,6 @@ public class FileServiceImpl implements FileService {
     }
 
     @Override
-    public ResourceResponseDTO download(ResourceRequestDTO request) {
-        return null;
-    }
-
-    @Override
     public List<ResourceResponseDTO> getDirectory(ResourceRequestDTO request) {
         User user = request.getUser();
         String path = request.getPath();
@@ -129,7 +127,7 @@ public class FileServiceImpl implements FileService {
 
         for (CommonPrefix c : response.commonPrefixes()) {
             result.add(ResourceResponseDTO.builder()
-                    .name(extractPathFromKey(path))
+                    .name(extractNameFromKey(path)) // todo как-то хуево отрабатывает
                     .path(request.getPath())
                     .resourceType(ResourceType.DIRECTORY)
                     .build());
@@ -146,7 +144,7 @@ public class FileServiceImpl implements FileService {
             }
 
             result.add(ResourceResponseDTO.builder()
-                    .name(extractNameFromKey(relativePath))
+                    .name(extractNameFromKey(relativePath)) // todo как-то хуево отрабатывает
                     .path(request.getPath())
                     .size(o.size())
                     .resourceType(ResourceType.FILE)
@@ -288,6 +286,142 @@ public class FileServiceImpl implements FileService {
         }
 
         return result;
+    }
+
+    // todo проблема этого говна в том что я не знаю что сюда падает в from и to. Надеюсь это просто файл и его новый
+//    путь. Т.е содержимое файла просто перетекает в новый key
+    @Override
+    public ResourceResponseDTO moveResource(MoveResourceRequestDTO request) {
+        User user = request.getUser();
+        String from = request.getFrom();
+        String to = request.getTo();
+
+        from = addUserPrefix(user.getId(), from);
+        to = addUserPrefix(user.getId(), to);
+
+        // Проверяем, что from существует и это файл
+        try {
+            s3.headObject(HeadObjectRequest.builder()
+                    .bucket(s3Properties.getBucket())
+                    .key(from)
+                    .build());
+        } catch (NoSuchKeyException e) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Resource not found: " + request.getFrom()); // 404
+        }
+
+        // Проверяем, что to не занят
+        try {
+            s3.headObject(HeadObjectRequest.builder()
+                    .bucket(s3Properties.getBucket())
+                    .key(to)
+                    .build());
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Destination already exists: " + request.getTo()); // 409
+        } catch (NoSuchKeyException e) {
+            // Если объекта нет, это хорошо, продолжаем
+        }
+
+        CopyObjectRequest objectRequest = CopyObjectRequest.builder()
+                .sourceBucket(s3Properties.getBucket())
+                .sourceKey(from)
+                .destinationBucket(s3Properties.getBucket())
+                .destinationKey(to)
+                .build();
+
+        s3.copyObject(objectRequest);
+        s3.deleteObject(DeleteObjectRequest.builder()
+                .bucket(s3Properties.getBucket())
+                .key(from)
+                .build()
+        );
+
+        Long size = s3.headObject(HeadObjectRequest.builder()
+                        .bucket(s3Properties.getBucket())
+                        .key(to)
+                        .build())
+                .contentLength();
+
+        return ResourceResponseDTO.builder()
+                .name(extractPathFromKey(to))
+                .resourceType(ResourceType.FILE)
+                .size(size)
+                .build();
+    }
+
+    @Override
+    public byte[] download(ResourceRequestDTO request) throws NoSuchKeyException, IOException {
+        User user = request.getUser();
+        String path = request.getPath();
+
+        String key = addUserPrefix(user.getId(), path);
+
+        if (isDirectory(key)) {
+            return zipDirectory(key);
+        }
+
+        return downloadFile(key);
+    }
+
+    private byte[] downloadFile(String key) throws NoSuchKeyException, IOException {
+        System.out.println("FileServiceImpl: downloadFile: key = " + key);
+
+        GetObjectRequest getObjectRequest = GetObjectRequest.builder()
+                .bucket(s3Properties.getBucket())
+                .key(key)
+                .build();
+
+        try (ResponseInputStream<GetObjectResponse> response = s3.getObject(getObjectRequest)) {
+            return response.readAllBytes();
+        }
+    }
+
+    private byte[] zipDirectory(String key) throws NoSuchKeyException, IOException {
+        System.out.println("FileServiceImpl: downloadDirectory: key = " + key);
+
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        try (ZipOutputStream zos = new ZipOutputStream(baos)) {
+            ListObjectsV2Request listRequest = ListObjectsV2Request.builder()
+                    .bucket(s3Properties.getBucket())
+                    .prefix(key)
+                    .build();
+
+            ListObjectsV2Response response = s3.listObjectsV2(listRequest);
+
+            for (S3Object o : response.contents()) {
+                String name = o.key().substring(key.length());
+
+                if (name.isEmpty()) continue;
+
+                GetObjectRequest getObjectRequest = GetObjectRequest.builder()
+                        .bucket(s3Properties.getBucket())
+                        .key(o.key())
+                        .build();
+
+                try (ResponseInputStream<GetObjectResponse> s3Object = s3.getObject(getObjectRequest)) {
+                    zos.putNextEntry(new ZipEntry(name));
+                    s3Object.transferTo(zos);
+                    zos.closeEntry();
+                }
+            }
+        }
+        return baos.toByteArray();
+    }
+
+    private boolean isDirectory(String key) throws NoSuchKeyException {
+        if (!key.endsWith("/")) {
+            s3.headObject(HeadObjectRequest.builder()
+                    .bucket(s3Properties.getBucket())
+                    .key(key)
+                    .build());
+            return false;
+        }
+
+        ListObjectsV2Response list = s3.listObjectsV2(ListObjectsV2Request.builder()
+                .bucket(s3Properties.getBucket())
+                .prefix(key)
+                .maxKeys(1)
+                .build());
+
+        return !list.contents().isEmpty();
     }
 
     private String addUserPrefix(Long userId, String path) {
