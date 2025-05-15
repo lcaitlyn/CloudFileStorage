@@ -11,14 +11,12 @@ public class PathValidationUtils {
 
     public static boolean isValidPath(String path) {
         if (path == null || path.trim().isEmpty()) return false;
-        if (path.equals("/")) return true; // Явно разрешаем корень
+        if (path.equals("/")) return true;
 
-        // Иначе — проверяем запрещённые паттерны
         Pattern pattern = Pattern.compile("(^//|//|\\.{2}|\\\\)");
         return !pattern.matcher(path).find();
     }
 
-    // todo доделать это говно
     public static String validateResourcePath(String path) {
         if (!isValidPath(path)) {
             throw new IllegalArgumentException("Invalid path: " + path);

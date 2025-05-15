@@ -28,7 +28,6 @@ public class DirectoryController {
 
     private UserService userService;
 
-    // todo опа а тут еще есть говна)
     @GetMapping
     public ResponseEntity<?> getDirectory(
             @RequestParam String path,

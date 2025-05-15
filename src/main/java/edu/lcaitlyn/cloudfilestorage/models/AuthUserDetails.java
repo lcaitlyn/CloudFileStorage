@@ -3,6 +3,7 @@ package edu.lcaitlyn.cloudfilestorage.models;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.Data;
+import lombok.Getter;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -11,13 +12,12 @@ import java.io.Serializable;
 import java.util.Collection;
 import java.util.List;
 
-@Data
+@Getter
 public class AuthUserDetails implements UserDetails, Serializable {
 
     private final User user;
 
-    @JsonCreator
-    public AuthUserDetails(@JsonProperty("user") User user) {
+    public AuthUserDetails(User user) {
         this.user = user;
     }
 
@@ -39,4 +39,5 @@ public class AuthUserDetails implements UserDetails, Serializable {
     public Long getId() {
         return user.getId();
     }
+
 }

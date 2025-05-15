@@ -55,7 +55,7 @@ public class AuthController {
     }
 
     // todo сделать проверку на логин, чтобы он был не меньше 5 символов и прочее
-    // todo создать ему пустую попку
+    // todo + создать ему пустую попку
     @PostMapping("/sign-up")
     public ResponseEntity<?> register(@RequestBody UserRequestDTO dto) {
         userService.save(new User(dto.getUsername(), dto.getPassword()));

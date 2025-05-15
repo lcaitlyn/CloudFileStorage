@@ -48,7 +48,6 @@ public class FileServiceImpl implements FileService {
         String prefix = addUserPrefix(user.getId(), path);
         System.out.println("FileServiceImpl: uploadFile: path = " + path + " prefix = " + prefix);
 
-
         try {
             for (MultipartFile file : files) {
                 try {
@@ -90,6 +89,8 @@ public class FileServiceImpl implements FileService {
     }
 
     // todo проверка на директорию?
+    // todo если это папка то возвращает размер пустой папки. крч какой-то бред.
+    //      Возможно запретить здесь папки, ведь для этого есть другое
     @Override
     public ResourceResponseDTO getFile(ResourceRequestDTO request) {
         User user = request.getUser();
@@ -389,7 +390,7 @@ public class FileServiceImpl implements FileService {
         String path = request.getPath();
         String key = addUserPrefix(user.getId(), path);
 
-        byte [] data;
+        byte[] data;
         String filename = extractNameFromKey(key);
         ResourceType type = ResourceType.FILE;
         if (isDirectory(key)) {
