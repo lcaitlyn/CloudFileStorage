@@ -1,31 +1,29 @@
 package edu.lcaitlyn.cloudfilestorage.service;
 
-import edu.lcaitlyn.cloudfilestorage.DTO.MoveResourceRequestDTO;
-import edu.lcaitlyn.cloudfilestorage.DTO.ResourceResponseDTO;
-import edu.lcaitlyn.cloudfilestorage.DTO.ResourceRequestDTO;
+import edu.lcaitlyn.cloudfilestorage.DTO.response.DownloadResourceResponseDTO;
+import edu.lcaitlyn.cloudfilestorage.DTO.request.MoveResourceRequestDTO;
+import edu.lcaitlyn.cloudfilestorage.DTO.response.ResourceResponseDTO;
+import edu.lcaitlyn.cloudfilestorage.DTO.request.ResourceRequestDTO;
 import org.springframework.stereotype.Service;
-import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 
-import java.io.FileNotFoundException;
-import java.io.IOException;
 import java.util.List;
 
 @Service
 public interface FileService {
 
-    List<ResourceResponseDTO> uploadFile(ResourceRequestDTO request) throws IOException;
+    List<ResourceResponseDTO> uploadFile(ResourceRequestDTO request);
 
-    ResourceResponseDTO getFile(ResourceRequestDTO request) throws FileNotFoundException;
+    ResourceResponseDTO getFile(ResourceRequestDTO request);
 
     List<ResourceResponseDTO> getDirectory(ResourceRequestDTO request);
 
     ResourceResponseDTO createDirectory(ResourceRequestDTO request);
 
-    void deleteResourceOrDirectory(ResourceRequestDTO request) throws NoSuchKeyException;
+    void deleteResourceOrDirectory(ResourceRequestDTO request);
 
     List<ResourceResponseDTO> findResource(ResourceRequestDTO request);
 
     ResourceResponseDTO moveResource(MoveResourceRequestDTO request);
 
-    byte [] download(ResourceRequestDTO request) throws NoSuchKeyException, IOException;
+    DownloadResourceResponseDTO download(ResourceRequestDTO request);
 }

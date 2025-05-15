@@ -1,11 +1,11 @@
 package edu.lcaitlyn.cloudfilestorage.controller;
 
-import edu.lcaitlyn.cloudfilestorage.DTO.MoveResourceRequestDTO;
-import edu.lcaitlyn.cloudfilestorage.DTO.ResourceResponseDTO;
-import edu.lcaitlyn.cloudfilestorage.DTO.ResourceRequestDTO;
-import edu.lcaitlyn.cloudfilestorage.models.User;
+import edu.lcaitlyn.cloudfilestorage.DTO.response.DownloadResourceResponseDTO;
+import edu.lcaitlyn.cloudfilestorage.DTO.request.MoveResourceRequestDTO;
+import edu.lcaitlyn.cloudfilestorage.DTO.response.ResourceResponseDTO;
+import edu.lcaitlyn.cloudfilestorage.DTO.request.ResourceRequestDTO;
+import edu.lcaitlyn.cloudfilestorage.models.AuthUserDetails;
 import edu.lcaitlyn.cloudfilestorage.service.FileService;
-import edu.lcaitlyn.cloudfilestorage.service.UserService;
 import edu.lcaitlyn.cloudfilestorage.utils.ErrorResponseUtils;
 import edu.lcaitlyn.cloudfilestorage.utils.PathValidationUtils;
 import lombok.AllArgsConstructor;
@@ -14,16 +14,10 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
-import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
-import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 
-import java.io.FileNotFoundException;
-import java.io.IOException;
-import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
 
 
 // todo обернуть каждый метод в try catch как сделал в download
@@ -34,56 +28,31 @@ public class ResourceController {
 
     private final FileService fileService;
 
-    private final UserService userService;
-
     @GetMapping
     public ResponseEntity<?> getResource(
             @RequestParam String path,
-            @AuthenticationPrincipal UserDetails userDetails) throws FileNotFoundException {
-        if (userDetails == null) {
-            return ErrorResponseUtils.print("User not logged in", HttpStatus.UNAUTHORIZED);
-        }
-
+            @AuthenticationPrincipal AuthUserDetails userDetails) {
         path = PathValidationUtils.validateResourcePath(path);
 
-        Optional<User> user = userService.findByUsername(userDetails.getUsername());
-        if (user.isEmpty()) {
-            return ErrorResponseUtils.print("User not found", HttpStatus.NOT_FOUND);
-        }
+        ResourceResponseDTO responseDTO = fileService.getFile(
+                ResourceRequestDTO.builder()
+                        .user(userDetails.getUser())
+                        .path(path)
+                        .build());
 
-        try {
-            ResourceResponseDTO responseDTO = fileService.getFile(ResourceRequestDTO.builder()
-                    .user(user.get())
-                    .path(path)
-                    .build());
-
-            return new ResponseEntity<>(responseDTO, HttpStatus.OK);
-        } catch (NoSuchKeyException e) {
-            return ErrorResponseUtils.print("File " + path + " not found", HttpStatus.NOT_FOUND);
-        }
+        return new ResponseEntity<>(responseDTO, HttpStatus.OK);
     }
 
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<?> uploadResource(
             @RequestPart("files") MultipartFile[] files,
             @RequestParam String path,
-            @AuthenticationPrincipal UserDetails userDetails) throws IOException {
-
-        if (userDetails == null) {
-            return ErrorResponseUtils.print("User not logged in", HttpStatus.UNAUTHORIZED);
-        }
-
+            @AuthenticationPrincipal AuthUserDetails userDetails) {
         path = PathValidationUtils.validateDirectoryPath(path);
-
-        // todo переделать это чтобы он отнимал куки, если user не найден
-        Optional<User> user = userService.findByUsername(userDetails.getUsername());
-        if (user.isEmpty()) {
-            return ErrorResponseUtils.print("User not found", HttpStatus.NOT_FOUND);
-        }
 
         List<ResourceResponseDTO> responseDTO = fileService.uploadFile(ResourceRequestDTO.builder()
                 .files(files)
-                .user(user.get())
+                .user(userDetails.getUser())
                 .path(path)
                 .build()
         );
@@ -92,124 +61,71 @@ public class ResourceController {
     }
 
     @DeleteMapping
-    public ResponseEntity<?> deleteResource(@RequestParam String path, @AuthenticationPrincipal UserDetails userDetails) throws FileNotFoundException {
-        if (userDetails == null) {
-            return ErrorResponseUtils.print("User not logged in", HttpStatus.UNAUTHORIZED);
-        }
-
+    public ResponseEntity<?> deleteResource(
+            @RequestParam String path,
+            @AuthenticationPrincipal AuthUserDetails userDetails) {
         path = PathValidationUtils.validateResourcePath(path);
 
-        Optional<User> user = userService.findByUsername(userDetails.getUsername());
-        if (user.isEmpty()) {
-            return ErrorResponseUtils.print("User not found", HttpStatus.NOT_FOUND);
-        }
+        fileService.deleteResourceOrDirectory(ResourceRequestDTO.builder()
+                .path(path)
+                .user(userDetails.getUser())
+                .build()
+        );
 
-        try {
-            fileService.deleteResourceOrDirectory(ResourceRequestDTO.builder()
-                    .path(path)
-                    .user(user.get())
-                    .build()
-            );
-
-            return ResponseEntity.status(HttpStatus.NO_CONTENT).build();
-        } catch (NoSuchKeyException e) {
-            return ErrorResponseUtils.print("File " + path + " not found", HttpStatus.NOT_FOUND);
-        }
+        return ResponseEntity.status(HttpStatus.NO_CONTENT).build();
     }
 
     @GetMapping("/search")
-    public ResponseEntity<?> searchResource(@RequestParam String query, @AuthenticationPrincipal UserDetails userDetails) throws FileNotFoundException {
-        if (userDetails == null) {
-            return ErrorResponseUtils.print("User not logged in", HttpStatus.UNAUTHORIZED);
-        }
-
+    public ResponseEntity<?> searchResource(
+            @RequestParam String query,
+            @AuthenticationPrincipal AuthUserDetails userDetails) {
         if (query == null || query.isEmpty()) {
             return ErrorResponseUtils.print("Query string is empty", HttpStatus.BAD_REQUEST);
         }
 
-        Optional<User> user = userService.findByUsername(userDetails.getUsername());
-        if (user.isEmpty()) {
-            return ErrorResponseUtils.print("User not found", HttpStatus.NOT_FOUND);
-        }
-
         List<ResourceResponseDTO> response = fileService.findResource(ResourceRequestDTO.builder()
-                .user(user.get())
+                .user(userDetails.getUser())
                 .path(query)
                 .build());
 
         return ResponseEntity.status(HttpStatus.OK).body(response);
     }
 
-    // todo Реализовать
     @GetMapping("/move")
-    public ResponseEntity<?> moveResource(@RequestParam String from, @RequestParam String to, @AuthenticationPrincipal UserDetails userDetails) {
-        if (userDetails == null) {
-            return ErrorResponseUtils.print("User not logged in", HttpStatus.UNAUTHORIZED);
-        }
-
-        if (from == null || from.isEmpty() || to == null || to.isEmpty()) {
-            return ErrorResponseUtils.print("From and To are empty. Try form=/1.txt&to=/123/", HttpStatus.BAD_REQUEST);
-        }
-
-        Optional<User> user = userService.findByUsername(userDetails.getUsername());
-        if (user.isEmpty()) {
-            return ErrorResponseUtils.print("User not found", HttpStatus.NOT_FOUND);
-        }
-
+    public ResponseEntity<?> moveResource(
+            @RequestParam String from,
+            @RequestParam String to,
+            @AuthenticationPrincipal AuthUserDetails userDetails) {
         from = PathValidationUtils.validateResourcePath(from);
         to = PathValidationUtils.validateResourcePath(to);
 
         ResourceResponseDTO response = fileService.moveResource(MoveResourceRequestDTO.builder()
                 .from(from)
                 .to(to)
-                .user(user.get())
+                .user(userDetails.getUser())
                 .build());
 
         return ResponseEntity.ok().body(response);
     }
 
-
-    // todo тут траблы с названиями файлов и их расширениями. вроде остальное качает нормальноо
     @GetMapping("/download")
-    public ResponseEntity<?> downloadResource(@RequestParam String path, @AuthenticationPrincipal UserDetails userDetails) {
-        if (userDetails == null) {
-            return ErrorResponseUtils.print("User not logged in", HttpStatus.UNAUTHORIZED);
-        }
-
-        Optional<User> user = userService.findByUsername(userDetails.getUsername());
-        if (user.isEmpty()) {
-            return ErrorResponseUtils.print("User not found", HttpStatus.NOT_FOUND);
-        }
-
+    public ResponseEntity<?> downloadResource(
+            @RequestParam String path,
+            @AuthenticationPrincipal AuthUserDetails userDetails) {
         path = PathValidationUtils.validateResourcePath(path);
 
-        try {
-            byte[] response = fileService.download(ResourceRequestDTO.builder()
-                    .user(user.get())
-                    .path(path)
-                    .build());
+        DownloadResourceResponseDTO response = fileService.download(ResourceRequestDTO.builder()
+                .user(userDetails.getUser())
+                .path(path)
+                .build()
+        );
 
-            String fileName = path.endsWith("/") ? path.substring(0, path.length() - 1) : path;
-            fileName = fileName.substring(fileName.lastIndexOf('/') + 1);
-            if (fileName.isEmpty()) fileName = "download";
+        String contentDisposition = "attachment; filename=\"" + response.getFilename() + "\"";
 
-            if (path.endsWith("/")) {
-                fileName += ".zip";
-            }
-
-            String contentDisposition = "attachment; filename=\"" + fileName + "\"";
-
-            return ResponseEntity.status(HttpStatus.OK)
-                    .header(HttpHeaders.CONTENT_DISPOSITION, contentDisposition)
-                    .contentType(MediaType.APPLICATION_OCTET_STREAM)
-                    .body(response);
-
-        } catch (NoSuchKeyException e) {
-            return ErrorResponseUtils.print("File " + path + " not found", HttpStatus.NOT_FOUND);
-        } catch (IOException e) {
-            System.out.println("DownloadController: Exception! " + e.getMessage());
-            return ErrorResponseUtils.print("Error occurred while downloading file", HttpStatus.SERVICE_UNAVAILABLE);
-        }
+        return ResponseEntity.status(HttpStatus.OK)
+                .header(HttpHeaders.CONTENT_DISPOSITION, contentDisposition)
+                .contentType(MediaType.APPLICATION_OCTET_STREAM)
+                .body(response.getData());
     }
 }
 
@@ -222,4 +138,12 @@ public class ResourceController {
 // Т.е если нам прилетает path, то контроллер не должен валидировать его. Это все должно делаться в логике нахуй
 // В Сервисе уже должно все проверятся и высылаться обратно ебаный exception или какой-нибудь хуевый респонс.
 // Т.е контроллеру должно быть похуй, он только для того чтобы размечать (get/post mapping крч)
-// Ну и собственно try/catch должны быть везде чтобы говна не случалась. И конечно же это должно быть в Сервсие
+// Ну и собственно try/catch должны быть везде чтобы говна не случалась. И конечно же это должно быть в Сервисе
+
+// А так же сделать ебать интеграцию с фронтом
+
+// убрать все sout логгеры
+
+// вынести нахуй логику S3 в отдельный класс
+
+// переделать аунтификацию

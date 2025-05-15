@@ -1,7 +1,8 @@
 package edu.lcaitlyn.cloudfilestorage.controller;
 
-import edu.lcaitlyn.cloudfilestorage.DTO.UserRequestDTO;
-import edu.lcaitlyn.cloudfilestorage.DTO.UserResponseDTO;
+import edu.lcaitlyn.cloudfilestorage.DTO.request.UserRequestDTO;
+import edu.lcaitlyn.cloudfilestorage.DTO.response.UserResponseDTO;
+import edu.lcaitlyn.cloudfilestorage.models.AuthUserDetails;
 import edu.lcaitlyn.cloudfilestorage.models.User;
 import edu.lcaitlyn.cloudfilestorage.service.UserService;
 import edu.lcaitlyn.cloudfilestorage.utils.ControllerUtils;
@@ -29,53 +30,42 @@ public class AuthController {
     private final AuthenticationManager authenticationManager;
 
     @PostMapping("/sign-in")
-    public ResponseEntity<?> login(@RequestBody UserRequestDTO userRequestDTO, HttpSession session) {
-        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        if (ControllerUtils.isAuthenticated(auth)) {
-            return ErrorResponseUtils.print("User already authenticated", HttpStatus.BAD_REQUEST);
-        }
-
-        String username = userRequestDTO.getUsername();
-        String password = userRequestDTO.getPassword();
-        Optional<User> user = userService.authenticate(username, password);
-
+    public ResponseEntity<?> login(@RequestBody UserRequestDTO dto, HttpSession session) {
+        Optional<User> user = userService.authenticate(dto.getUsername(), dto.getPassword());
         if (user.isEmpty()) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
 
-        Authentication authToken = new UsernamePasswordAuthenticationToken(username, password);
+        AuthUserDetails userDetails = new AuthUserDetails(user.get());
+
+        Authentication authToken = new UsernamePasswordAuthenticationToken(
+                dto.getUsername(),
+                dto.getPassword(),
+                userDetails.getAuthorities()
+        );
         Authentication authenticated = authenticationManager.authenticate(authToken);
         SecurityContextHolder.getContext().setAuthentication(authenticated);
         session.setAttribute(HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY, SecurityContextHolder.getContext());
 
-        UserResponseDTO responseDTO = UserResponseDTO.builder().username(user.get().getUsername()).build();
+        UserResponseDTO responseDTO = UserResponseDTO.builder()
+                .username(user.get().getUsername())
+                .build();
+
         return ResponseEntity.ok(responseDTO);
     }
 
+    // todo сделать проверку на логин, чтобы он был не меньше 5 символов и прочее
+    // todo создать ему пустую попку
     @PostMapping("/sign-up")
-    public ResponseEntity<?> register(@RequestBody UserRequestDTO userRequestDTO) {
-        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        if (ControllerUtils.isAuthenticated(auth)) {
-            return ErrorResponseUtils.print("User already authenticated", HttpStatus.BAD_REQUEST);
-        }
+    public ResponseEntity<?> register(@RequestBody UserRequestDTO dto) {
+        userService.save(new User(dto.getUsername(), dto.getPassword()));
 
-        String username = userRequestDTO.getUsername();
-        String password = userRequestDTO.getPassword();
-
-        userService.save(new User(username, password));
-
-        UserResponseDTO responseDTO = UserResponseDTO.builder().username(username).build();
+        UserResponseDTO responseDTO = UserResponseDTO.builder().username(dto.getUsername()).build();
         return ResponseEntity.status(HttpStatus.CREATED).body(responseDTO);
     }
 
     @PostMapping("/sign-out")
     public ResponseEntity<?> logout(HttpSession session) {
-        // todo переделать это на UserDetail
-        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        if (!ControllerUtils.isAuthenticated(auth)) {
-            return ErrorResponseUtils.print("User are not authenticated", HttpStatus.UNAUTHORIZED);
-        }
-
         SecurityContextHolder.clearContext();
         session.removeAttribute(HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY);
         return ResponseEntity.status(HttpStatus.NO_CONTENT).build();

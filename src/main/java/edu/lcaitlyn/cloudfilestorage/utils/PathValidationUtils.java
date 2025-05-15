@@ -1,9 +1,12 @@
 package edu.lcaitlyn.cloudfilestorage.utils;
 
+import lombok.experimental.UtilityClass;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Pattern;
 
+@UtilityClass
 public class PathValidationUtils {
 
     public static boolean isValidPath(String path) {

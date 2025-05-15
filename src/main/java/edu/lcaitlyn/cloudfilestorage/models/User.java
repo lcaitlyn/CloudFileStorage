@@ -1,5 +1,6 @@
 package edu.lcaitlyn.cloudfilestorage.models;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.persistence.*;
 import lombok.*;
 

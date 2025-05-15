@@ -1,4 +1,4 @@
-package edu.lcaitlyn.cloudfilestorage.DTO;
+package edu.lcaitlyn.cloudfilestorage.DTO.request;
 
 import lombok.AllArgsConstructor;
 import lombok.Data;

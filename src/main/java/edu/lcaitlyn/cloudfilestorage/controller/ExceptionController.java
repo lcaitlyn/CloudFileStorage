@@ -1,5 +1,6 @@
 package edu.lcaitlyn.cloudfilestorage.controller;
 
+import edu.lcaitlyn.cloudfilestorage.exception.ResourceNotFound;
 import edu.lcaitlyn.cloudfilestorage.exception.UserAlreadyExist;
 import edu.lcaitlyn.cloudfilestorage.exception.UserNotFoundException;
 import edu.lcaitlyn.cloudfilestorage.utils.ErrorResponseUtils;
@@ -55,5 +56,10 @@ public class ExceptionController {
     @ExceptionHandler
     public ResponseEntity<?> handeResponseStatusException(ResponseStatusException ex) {
         return ErrorResponseUtils.print(ex.getReason(), ex.getStatusCode());
+    }
+
+    @ExceptionHandler
+    public ResponseEntity<?> handeResourceNotFoundException(ResourceNotFound ex) {
+        return ErrorResponseUtils.print(ex.getMessage(), HttpStatus.NOT_FOUND);
     }
 }

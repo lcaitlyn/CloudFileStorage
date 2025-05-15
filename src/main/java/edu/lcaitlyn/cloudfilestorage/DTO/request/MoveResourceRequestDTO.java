@@ -1,10 +1,8 @@
-package edu.lcaitlyn.cloudfilestorage.DTO;
+package edu.lcaitlyn.cloudfilestorage.DTO.request;
 
 import edu.lcaitlyn.cloudfilestorage.models.User;
-import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
-import lombok.NoArgsConstructor;
 
 @Data
 @Builder
