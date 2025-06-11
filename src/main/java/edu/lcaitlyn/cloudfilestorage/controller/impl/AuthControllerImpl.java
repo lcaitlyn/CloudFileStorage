@@ -1,13 +1,15 @@
-package edu.lcaitlyn.cloudfilestorage.controller;
+package edu.lcaitlyn.cloudfilestorage.controller.impl;
 
+import edu.lcaitlyn.cloudfilestorage.DTO.request.ResourceRequestDTO;
 import edu.lcaitlyn.cloudfilestorage.DTO.request.UserRequestDTO;
 import edu.lcaitlyn.cloudfilestorage.DTO.response.UserResponseDTO;
+import edu.lcaitlyn.cloudfilestorage.controller.api.AuthController;
 import edu.lcaitlyn.cloudfilestorage.models.AuthUserDetails;
 import edu.lcaitlyn.cloudfilestorage.models.User;
+import edu.lcaitlyn.cloudfilestorage.service.FileService;
 import edu.lcaitlyn.cloudfilestorage.service.UserService;
-import edu.lcaitlyn.cloudfilestorage.utils.ControllerUtils;
-import edu.lcaitlyn.cloudfilestorage.utils.ErrorResponseUtils;
 import jakarta.servlet.http.HttpSession;
+import jakarta.validation.Valid;
 import lombok.AllArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -16,20 +18,22 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.web.context.HttpSessionSecurityContextRepository;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Optional;
 
 @RestController
 @AllArgsConstructor
-@RequestMapping("/auth")
-public class AuthController {
+public class AuthControllerImpl implements AuthController {
 
     private final UserService userService;
 
     private final AuthenticationManager authenticationManager;
 
-    @PostMapping("/sign-in")
+    private final FileService fileService;
+
+    @Override
     public ResponseEntity<?> login(@RequestBody UserRequestDTO dto, HttpSession session) {
         Optional<User> user = userService.authenticate(dto.getUsername(), dto.getPassword());
         if (user.isEmpty()) {
@@ -54,17 +58,27 @@ public class AuthController {
         return ResponseEntity.ok(responseDTO);
     }
 
-    // todo сделать проверку на логин, чтобы он был не меньше 5 символов и прочее
-    // todo + создать ему пустую попку
-    @PostMapping("/sign-up")
-    public ResponseEntity<?> register(@RequestBody UserRequestDTO dto) {
+    // todo сделать проверку на логин, чтобы он был не меньше 5 символов и прочее. все еще не работает
+    @Override
+    public ResponseEntity<?> register(@Valid @RequestBody UserRequestDTO dto) {
         userService.save(new User(dto.getUsername(), dto.getPassword()));
+
+        Optional<User> user = userService.findByUsername(dto.getUsername());
+        if (user.isEmpty()) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        }
+
+        fileService.createDirectory(ResourceRequestDTO.builder()
+                .user(user.get())
+                .path("/")
+                .build()
+        );
 
         UserResponseDTO responseDTO = UserResponseDTO.builder().username(dto.getUsername()).build();
         return ResponseEntity.status(HttpStatus.CREATED).body(responseDTO);
     }
 
-    @PostMapping("/sign-out")
+    @Override
     public ResponseEntity<?> logout(HttpSession session) {
         SecurityContextHolder.clearContext();
         session.removeAttribute(HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY);

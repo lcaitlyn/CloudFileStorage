@@ -1,9 +1,10 @@
-package edu.lcaitlyn.cloudfilestorage.controller;
+package edu.lcaitlyn.cloudfilestorage.controller.impl;
 
-import edu.lcaitlyn.cloudfilestorage.DTO.response.DownloadResourceResponseDTO;
 import edu.lcaitlyn.cloudfilestorage.DTO.request.MoveResourceRequestDTO;
-import edu.lcaitlyn.cloudfilestorage.DTO.response.ResourceResponseDTO;
 import edu.lcaitlyn.cloudfilestorage.DTO.request.ResourceRequestDTO;
+import edu.lcaitlyn.cloudfilestorage.DTO.response.DownloadResourceResponseDTO;
+import edu.lcaitlyn.cloudfilestorage.DTO.response.ResourceResponseDTO;
+import edu.lcaitlyn.cloudfilestorage.controller.api.ResourceController;
 import edu.lcaitlyn.cloudfilestorage.models.AuthUserDetails;
 import edu.lcaitlyn.cloudfilestorage.service.FileService;
 import edu.lcaitlyn.cloudfilestorage.utils.ErrorResponseUtils;
@@ -14,7 +15,10 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestPart;
+import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
@@ -22,17 +26,17 @@ import java.util.List;
 @RestController
 @RequestMapping("/resource")
 @AllArgsConstructor
-public class ResourceController {
+public class ResourceControllerImpl implements ResourceController {
 
     private final FileService fileService;
 
-    @GetMapping
+    @Override
     public ResponseEntity<?> getResource(
             @RequestParam String path,
             @AuthenticationPrincipal AuthUserDetails userDetails) {
         path = PathValidationUtils.validateResourcePath(path);
 
-        ResourceResponseDTO responseDTO = fileService.getFile(
+        ResourceResponseDTO responseDTO = fileService.getResource(
                 ResourceRequestDTO.builder()
                         .user(userDetails.getUser())
                         .path(path)
@@ -41,7 +45,7 @@ public class ResourceController {
         return new ResponseEntity<>(responseDTO, HttpStatus.OK);
     }
 
-    @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @Override
     public ResponseEntity<?> uploadResource(
             @RequestPart("files") MultipartFile[] files,
             @RequestParam String path,
@@ -58,13 +62,13 @@ public class ResourceController {
         return ResponseEntity.status(HttpStatus.CREATED).body(responseDTO);
     }
 
-    @DeleteMapping
+    @Override
     public ResponseEntity<?> deleteResource(
             @RequestParam String path,
             @AuthenticationPrincipal AuthUserDetails userDetails) {
         path = PathValidationUtils.validateResourcePath(path);
 
-        fileService.deleteResourceOrDirectory(ResourceRequestDTO.builder()
+        fileService.deleteResource(ResourceRequestDTO.builder()
                 .path(path)
                 .user(userDetails.getUser())
                 .build()
@@ -73,7 +77,7 @@ public class ResourceController {
         return ResponseEntity.status(HttpStatus.NO_CONTENT).build();
     }
 
-    @GetMapping("/search")
+    @Override
     public ResponseEntity<?> searchResource(
             @RequestParam String query,
             @AuthenticationPrincipal AuthUserDetails userDetails) {
@@ -89,7 +93,7 @@ public class ResourceController {
         return ResponseEntity.status(HttpStatus.OK).body(response);
     }
 
-    @GetMapping("/move")
+    @Override
     public ResponseEntity<?> moveResource(
             @RequestParam String from,
             @RequestParam String to,
@@ -106,13 +110,13 @@ public class ResourceController {
         return ResponseEntity.ok().body(response);
     }
 
-    @GetMapping("/download")
+    @Override
     public ResponseEntity<?> downloadResource(
             @RequestParam String path,
             @AuthenticationPrincipal AuthUserDetails userDetails) {
         path = PathValidationUtils.validateResourcePath(path);
 
-        DownloadResourceResponseDTO response = fileService.download(ResourceRequestDTO.builder()
+        DownloadResourceResponseDTO response = fileService.downloadResource(ResourceRequestDTO.builder()
                 .user(userDetails.getUser())
                 .path(path)
                 .build()
@@ -126,12 +130,3 @@ public class ResourceController {
                 .body(response.getData());
     }
 }
-
-// todo читай ниже ебать. Тут настоящий туду
-//      ну вообще ебать хуйня какая-то получилась. конечно работает, но с костылями.
-//      Из задач:
-//      1. Переделать нахуй имена файлов и папок ( мб заюзай substring(key.length()) )
-//      2. убрать все sout логгеры
-//      3. вынести нахуй логику S3 в отдельный класс
-//      4. убрать все to do
-//      5. А так же сделать ебать интеграцию с фронтом

@@ -1,34 +1,27 @@
-package edu.lcaitlyn.cloudfilestorage.controller;
+package edu.lcaitlyn.cloudfilestorage.controller.impl;
 
-import edu.lcaitlyn.cloudfilestorage.DTO.response.ResourceResponseDTO;
 import edu.lcaitlyn.cloudfilestorage.DTO.request.ResourceRequestDTO;
-import edu.lcaitlyn.cloudfilestorage.exception.DirectoryNotFound;
+import edu.lcaitlyn.cloudfilestorage.DTO.response.ResourceResponseDTO;
+import edu.lcaitlyn.cloudfilestorage.controller.api.DirectoryController;
 import edu.lcaitlyn.cloudfilestorage.models.AuthUserDetails;
-import edu.lcaitlyn.cloudfilestorage.models.User;
 import edu.lcaitlyn.cloudfilestorage.service.FileService;
-import edu.lcaitlyn.cloudfilestorage.service.UserService;
-import edu.lcaitlyn.cloudfilestorage.utils.ErrorResponseUtils;
 import edu.lcaitlyn.cloudfilestorage.utils.PathValidationUtils;
 import lombok.AllArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
-import org.springframework.security.core.userdetails.UserDetails;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
-import java.util.Optional;
 
 @RestController
-@RequestMapping("/directory")
 @AllArgsConstructor
-public class DirectoryController {
+public class DirectoryControllerImpl implements DirectoryController {
 
     private FileService fileService;
 
-    private UserService userService;
-
-    @GetMapping
+    @Override
     public ResponseEntity<?> getDirectory(
             @RequestParam String path,
             @AuthenticationPrincipal AuthUserDetails userDetails) {
@@ -42,16 +35,16 @@ public class DirectoryController {
     }
 
 
-    @PostMapping
+    @Override
     public ResponseEntity<?> createDirectory(
             @RequestParam String path,
             @AuthenticationPrincipal AuthUserDetails userDetails) {
         path = PathValidationUtils.validateDirectoryPath(path);
 
         ResourceResponseDTO responseDTO = fileService.createDirectory(ResourceRequestDTO.builder()
-                        .path(path)
-                        .user(userDetails.getUser())
-                        .build());
+                .path(path)
+                .user(userDetails.getUser())
+                .build());
 
         return new ResponseEntity<>(responseDTO, HttpStatus.CREATED);
     }

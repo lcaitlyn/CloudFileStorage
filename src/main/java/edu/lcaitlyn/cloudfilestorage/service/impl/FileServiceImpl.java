@@ -1,44 +1,66 @@
 package edu.lcaitlyn.cloudfilestorage.service.impl;
 
-import edu.lcaitlyn.cloudfilestorage.DTO.response.DownloadResourceResponseDTO;
+import edu.lcaitlyn.cloudfilestorage.DTO.S3ObjectMetadata;
 import edu.lcaitlyn.cloudfilestorage.DTO.request.MoveResourceRequestDTO;
-import edu.lcaitlyn.cloudfilestorage.DTO.response.ResourceResponseDTO;
 import edu.lcaitlyn.cloudfilestorage.DTO.request.ResourceRequestDTO;
-import edu.lcaitlyn.cloudfilestorage.config.S3Properties;
+import edu.lcaitlyn.cloudfilestorage.DTO.response.DownloadResourceResponseDTO;
+import edu.lcaitlyn.cloudfilestorage.DTO.response.ResourceResponseDTO;
 import edu.lcaitlyn.cloudfilestorage.enums.ResourceType;
 import edu.lcaitlyn.cloudfilestorage.exception.DirectoryNotFound;
 import edu.lcaitlyn.cloudfilestorage.exception.ResourceNotFound;
 import edu.lcaitlyn.cloudfilestorage.models.User;
 import edu.lcaitlyn.cloudfilestorage.service.FileService;
+import edu.lcaitlyn.cloudfilestorage.service.S3Service;
 import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
-import software.amazon.awssdk.core.ResponseInputStream;
-import software.amazon.awssdk.core.sync.RequestBody;
-import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.*;
 
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.List;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipOutputStream;
 
 @Slf4j
 @Service
 @AllArgsConstructor
 public class FileServiceImpl implements FileService {
 
-    private final S3Client s3;
-
-    private final S3Properties s3Properties;
-
     private final String pathPrefixFormat = "user-%d-files";
 
+    private final S3Service s3Service;
+
+    @Override
+    public ResourceResponseDTO getResource(ResourceRequestDTO request) {
+        User user = request.getUser();
+        String path = request.getPath();
+        String key = addUserPrefix(user.getId(), path);
+
+        try {
+            log.info("FileServiceImpl: getFile: path = {} key = {}", path, key);
+            S3ObjectMetadata response = s3Service.getObject(key);
+
+            ResourceType type = s3Service.isDirectory(key) ? ResourceType.DIRECTORY : ResourceType.FILE;
+
+            return ResourceResponseDTO.builder()
+                    .path(extractPathFromKey(key))
+                    .name(extractNameFromKey(key))
+                    .size(response.getContentLength())
+                    .resourceType(type)
+                    .build();
+        } catch (NoSuchKeyException e) {
+            throw new ResourceNotFound(extractNameFromKey(key));
+        } catch (S3Exception e) {
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Error while getting resource", e);
+        }
+    }
+
+    // todo Сделать чтобы при одинаковых названиях файлов, все четенько работало, если нет 409
+    //                                      (11.06 обновил)
     @Override
     public List<ResourceResponseDTO> uploadFile(ResourceRequestDTO request) {
         User user = request.getUser();
@@ -46,74 +68,44 @@ public class FileServiceImpl implements FileService {
         MultipartFile[] files = request.getFiles();
 
         String prefix = addUserPrefix(user.getId(), path);
-        System.out.println("FileServiceImpl: uploadFile: path = " + path + " prefix = " + prefix);
 
         try {
             for (MultipartFile file : files) {
-                try {
-                    getFile(ResourceRequestDTO.builder()
-                            .user(user)
-                            .path(path + file.getOriginalFilename())
-                            .build());
-
-                    // если нашел такой файл выйдет ошибка ебать
-                    throw new ResponseStatusException(HttpStatus.CONFLICT, "File \"" + file.getOriginalFilename() + "\" already exists.");
-                } catch (NoSuchKeyException e) {
+                String key = prefix + file.getOriginalFilename();
+                if (s3Service.isResourceExists(key)) {
+                    throw new ResponseStatusException(HttpStatus.CONFLICT, "File '" + file.getOriginalFilename() + "' is already exists.");
                 }
             }
 
-            List<ResourceResponseDTO> response = new ArrayList<>();
-            for (MultipartFile file : files) {
-                PutObjectRequest objectRequest = PutObjectRequest.builder()
-                        .bucket(s3Properties.getBucket())
-                        .key(prefix + file.getOriginalFilename())
-                        .contentType(file.getContentType())
-                        .build();
+            createDirectoriesIfNeeded(prefix);
 
-                System.out.println("FileServiceImpl: uploadFile: path = " + path + " key = " + prefix + file.getOriginalFilename());
-                s3.putObject(objectRequest, RequestBody.fromBytes(file.getBytes()));
+            List<ResourceResponseDTO> response = new ArrayList<>();
+
+            for (MultipartFile file : files) {
+                String key = prefix + file.getOriginalFilename();
+
+                try {
+                    log.info("FileServiceImpl: uploadFile: key = {}{}", prefix, file.getOriginalFilename());
+                    s3Service.putObject(key, S3ObjectMetadata.builder()
+                            .contentType(file.getContentType())
+                            .data(file.getBytes())
+                            .build()
+                    );
+                } catch (IOException e) {
+                    throw new ResponseStatusException(HttpStatus.CONFLICT, "Failed to upload file. Error with getting bytes.");
+                }
 
                 response.add(ResourceResponseDTO.builder()
-                        .path(path) // todo что-то не так тут. проверить!
+                        .path(path)
                         .name(file.getOriginalFilename())
                         .size(file.getSize())
                         .resourceType(ResourceType.FILE)
                         .build()
                 );
             }
-
             return response;
-        } catch (Exception e) {
+        } catch (S3Exception e) {
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Error while uploading file");
-        }
-    }
-
-    // todo проверка на директорию?
-    // todo если это папка то возвращает размер пустой папки. крч какой-то бред.
-    //      Возможно запретить здесь папки, ведь для этого есть другое
-    @Override
-    public ResourceResponseDTO getFile(ResourceRequestDTO request) {
-        User user = request.getUser();
-        String path = request.getPath();
-        String key = addUserPrefix(user.getId(), path);
-        System.out.println("FileServiceImpl: getFile: path = " + path + " key = " + key);
-
-        try {
-            HeadObjectRequest objectRequest = HeadObjectRequest.builder()
-                    .bucket(s3Properties.getBucket())
-                    .key(key)
-                    .build();
-
-            HeadObjectResponse response = s3.headObject(objectRequest);
-
-            return ResourceResponseDTO.builder()
-                    .path(path) // todo крч тут тоже ебала. она добавляет / перед path
-                    .name(extractNameFromKey(key))
-                    .size(response.contentLength())
-                    .resourceType(ResourceType.FILE)
-                    .build();
-        } catch (NoSuchKeyException e) {
-            throw new ResourceNotFound(e.getMessage());
         }
     }
 
@@ -123,49 +115,48 @@ public class FileServiceImpl implements FileService {
         String path = request.getPath();
 
         String prefix = addUserPrefix(user.getId(), path);
-        System.out.println("FileServiceImpl: getDirectory: path = " + path + " prefix = " + prefix);
 
-        ListObjectsV2Request listRequest = ListObjectsV2Request.builder()
-                .bucket(s3Properties.getBucket())
-                .delimiter("/")
-                .prefix(prefix)
-                .build();
-
-        List<ResourceResponseDTO> result = new ArrayList<>();
-        ListObjectsV2Response response = s3.listObjectsV2(listRequest);
-
-        if (response.contents().isEmpty() && response.commonPrefixes().isEmpty()) {
-            throw new DirectoryNotFound("Directory not found " + request.getPath());
+        if (!s3Service.isDirectory(prefix)) {
+            throw new DirectoryNotFound(extractNameFromKey(path));
         }
 
-        for (CommonPrefix c : response.commonPrefixes()) {
-            String relativePath = c.prefix().substring(prefix.length());
-            result.add(ResourceResponseDTO.builder()
-                    .path(request.getPath())
-                    .name(relativePath)
-                    .resourceType(ResourceType.DIRECTORY)
-                    .build());
-        }
+        try {
+            List<ResourceResponseDTO> response = new ArrayList<>();
 
-        for (S3Object o : response.contents()) {
-            String fullKey = o.key();
-            if (fullKey.equals(prefix)) continue; // Пропускаем саму папку
+            log.info("FileServiceImpl: getDirectory: path = {}, prefix = {}", path, prefix);
+            List<String> directories = s3Service.listDirectories(prefix);
+            for (String directory : directories) {
+                String relativePath = directory.substring(prefix.length());
 
-            String relativePath = fullKey.substring(prefix.length());
-            if (relativePath.contains("/")) {
-                // Пропускаем вложенные элементы — они попадут в подзапрос
-                continue;
+                response.add(ResourceResponseDTO.builder()
+                        .name(relativePath)
+                        .path(extractPathFromKey(relativePath))
+                        .resourceType(ResourceType.DIRECTORY)
+                        .build()
+                );
             }
 
-            result.add(ResourceResponseDTO.builder()
-                    .path(extractPathFromKey(fullKey))
-                    .name(relativePath)
-                    .size(o.size())
-                    .resourceType(ResourceType.FILE)
-                    .build());
-        }
+            List<S3Object> files = s3Service.listObjects(prefix);
+            for (S3Object file : files) {
+                String fullKey = file.key();
+                if (fullKey.equals(prefix)) continue;
 
-        return result;
+                String relativePath = fullKey.substring(prefix.length());
+                if (relativePath.contains("/")) continue;
+
+                response.add(ResourceResponseDTO.builder()
+                        .name(relativePath)
+                        .path(extractPathFromKey(relativePath))
+                        .size(file.size())
+                        .resourceType(ResourceType.FILE)
+                        .build()
+                );
+            }
+
+            return response;
+        } catch (S3Exception e) {
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Error while getting objects");
+        }
     }
 
     @Override
@@ -174,16 +165,13 @@ public class FileServiceImpl implements FileService {
         String path = request.getPath();
 
         String prefix = addUserPrefix(user.getId(), path);
-        System.out.println("FileServiceImpl: createDirectory: path = " + path + " prefix = " + prefix);
+
+        if (s3Service.isResourceExists(prefix)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Directory '" + path + "' is already exists.");
+        }
 
         try {
-            PutObjectRequest objectRequest = PutObjectRequest.builder()
-                    .bucket(s3Properties.getBucket())
-                    .key(prefix)
-                    .contentLength(0L)
-                    .build();
-
-            s3.putObject(objectRequest, RequestBody.empty());
+            createDirectoriesIfNeeded(prefix);
 
             return ResourceResponseDTO.builder()
                     .path(removeNameFormPath(path))
@@ -191,78 +179,60 @@ public class FileServiceImpl implements FileService {
                     .resourceType(ResourceType.DIRECTORY)
                     .build();
         } catch (S3Exception e) {
-            throw new RuntimeException("Failed to create directory in MinIO: " + e.awsErrorDetails().errorMessage(), e);
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to create directory: " + path);
+        }
+    }
+
+    private void createDirectoriesIfNeeded(String key) {
+        if (!key.endsWith("/")) {
+            key += "/";
+        }
+
+        key = key.substring(0, key.length() - 1);
+
+        Deque<String> stack = new ArrayDeque<>();
+
+        while (key.contains("/") && !s3Service.isResourceExists(key + "/")) {
+            stack.push(key + "/");
+            key = key.substring(0, key.lastIndexOf("/"));
+        }
+
+        while (!stack.isEmpty()) {
+            String dirToCreate = stack.pop();
+            log.info("FileServiceImpl: createDirectory: prefix = {}", dirToCreate);
+            s3Service.createDirectory(dirToCreate);
         }
     }
 
     @Override
-    public void deleteResourceOrDirectory(ResourceRequestDTO request) {
+    public void deleteResource(ResourceRequestDTO request) {
         User user = request.getUser();
         String path = request.getPath();
         String prefix = addUserPrefix(user.getId(), path);
 
         try {
-            boolean isFolder = s3.listObjectsV2(ListObjectsV2Request.builder()
-                    .bucket(s3Properties.getBucket())
-                    .prefix(prefix + "/")
-                    .maxKeys(1)
-                    .build()
-            ).hasContents();
+            if (prefix.endsWith("/")) {
+                boolean isDir = s3Service.isDirectory(prefix);
+                if (!isDir) {
+                    throw new DirectoryNotFound(extractNameFromKey(path));
+                }
 
-            if (isFolder) {
-                System.out.println("FileServiceImpl: deleteDirectory: path = " + path + " key = " + prefix);
-                deleteDirectory(prefix);
+                log.info("FileServiceImpl: deleteDirectory: path = {}, prefix = {}", path, prefix);
+                s3Service.deleteDirectory(prefix);
             } else {
-                System.out.println("FileServiceImpl: deleteResource: path = " + path + " key = " + prefix);
-                deleteResource(prefix);
+                if (!s3Service.isFileExist(prefix)) {
+                    throw new ResourceNotFound(extractNameFromKey(path));
+                }
+
+                boolean isDir = s3Service.isDirectory(prefix);
+                if (isDir) {
+                    log.info("FileServiceImpl: deleteDirectory (no trailing slash): path = {}, prefix = {}", path, prefix);
+                    s3Service.deleteDirectory(prefix);
+                } else {
+                    log.info("FileServiceImpl: deleteFile: path = {}, prefix = {}", path, prefix);
+                    s3Service.deleteObject(prefix);
+                }
             }
-        } catch (NoSuchKeyException e) {
-            throw new ResourceNotFound(e.getMessage());
-        } catch (Exception e) {
-            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Error while deleting resource");
-        }
-
-    }
-
-    private void deleteResource(String key) {
-        try {
-            HeadObjectRequest headReq = HeadObjectRequest.builder()
-                    .bucket(s3Properties.getBucket())
-                    .key(key)
-                    .build();
-
-            s3.headObject(headReq);
-
-            s3.deleteObject(DeleteObjectRequest.builder()
-                    .bucket(s3Properties.getBucket())
-                    .key(key)
-                    .build());
-        } catch (NoSuchKeyException e) {
-            throw new ResourceNotFound(e.getMessage());
-        } catch (S3Exception e) {
-            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Error while deleting resource");
-        }
-    }
-
-    private void deleteDirectory(String key) {
-        try {
-            List<S3Object> objects = s3.listObjectsV2(ListObjectsV2Request.builder()
-                            .bucket(s3Properties.getBucket())
-                            .prefix(key)
-                            .build()
-                    )
-                    .contents();
-
-            List<ObjectIdentifier> toDelete = objects.stream()
-                    .map(obj -> ObjectIdentifier.builder().key(obj.key()).build())
-                    .toList();
-
-            s3.deleteObjects(DeleteObjectsRequest.builder()
-                    .bucket(s3Properties.getBucket())
-                    .delete(Delete.builder().objects(toDelete).build())
-                    .build());
-        } catch (NoSuchKeyException e) {
-            throw new ResourceNotFound(e.getMessage());
         } catch (S3Exception e) {
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Error while deleting resource");
         }
@@ -273,52 +243,55 @@ public class FileServiceImpl implements FileService {
         User user = request.getUser();
         String query = request.getPath().toLowerCase();
         String prefix = addUserPrefix(user.getId(), "/");
-        System.out.println("FileServiceImpl: findResource: path = " + prefix + " query = " + query);
+
+        List<ResourceResponseDTO> response = new ArrayList<>();
+        String continuationToken = null;
 
         try {
-            List<ResourceResponseDTO> result = new ArrayList<>();
-
-            String continuationToken = null;
-
             while (true) {
-                ListObjectsV2Request.Builder builder = ListObjectsV2Request.builder()
-                        .bucket(s3Properties.getBucket())
-                        .prefix(prefix)
-                        .maxKeys(1000);
+                log.info("FileServiceImpl: findResource: path = {}, query = {}", prefix, query);
+                ListObjectsV2Response objectv2Response = s3Service.listAllObjects(prefix, continuationToken);
 
-                if (continuationToken != null) {
-                    builder = builder.continuationToken(continuationToken);
-                }
-
-                ListObjectsV2Response response = s3.listObjectsV2(builder.build());
-
-                for (S3Object o : response.contents()) {
-                    String key = o.key();
+                for (CommonPrefix cp : objectv2Response.commonPrefixes()) {
+                    String key = cp.prefix();
                     String name = extractNameFromKey(key);
 
-                    if (!name.toLowerCase().contains(query)) {
-                        continue;
-                    }
+                    if (!name.toLowerCase().contains(query)) continue;
 
-                    boolean isDirectory = key.endsWith("/");
-                    String path = extractPathFromKey(key);
-
-                    result.add(ResourceResponseDTO.builder()
-                            .path(path)
+                    response.add(ResourceResponseDTO.builder()
+                            .path(extractPathFromKey(key))
                             .name(name)
-                            .resourceType((isDirectory ? ResourceType.DIRECTORY : ResourceType.FILE))
-                            .size(o.size())
+                            .resourceType(ResourceType.DIRECTORY)
                             .build());
                 }
 
-                if (!response.isTruncated()) break;
+                for (S3Object o : objectv2Response.contents()) {
+                    String key = o.key();
+                    String name = extractNameFromKey(key);
 
-                continuationToken = response.nextContinuationToken();
+                    if (!name.toLowerCase().contains(query)) continue;
+
+                    ResourceResponseDTO.ResourceResponseDTOBuilder builder = ResourceResponseDTO.builder()
+                            .path(extractPathFromKey(key))
+                            .name(name);
+
+                    if (key.endsWith("/") && o.size() == 0) {
+                        builder.resourceType(ResourceType.DIRECTORY);
+                    } else {
+                        builder.resourceType(ResourceType.FILE)
+                                .size(o.size());
+                    }
+
+                    response.add(builder.build());
+                }
+
+                if (!objectv2Response.isTruncated()) break;
+                continuationToken = objectv2Response.nextContinuationToken();
             }
 
-            return result;
+            return response;
         } catch (S3Exception e) {
-            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Error while searching resource");
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Error while getting objects");
         }
     }
 
@@ -331,47 +304,28 @@ public class FileServiceImpl implements FileService {
         from = addUserPrefix(user.getId(), from);
         to = addUserPrefix(user.getId(), to);
 
-        try {
-            s3.headObject(HeadObjectRequest.builder()
-                    .bucket(s3Properties.getBucket())
-                    .key(from)
-                    .build());
-        } catch (NoSuchKeyException e) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Resource not found: " + request.getFrom());
+        if (from.endsWith("/") || to.endsWith("/")) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Should not ends with '/': from =" + request.getFrom() + ", to = " + request.getTo());
+        }
+
+        if (!s3Service.isFileExist(from)) {
+            throw new ResourceNotFound(request.getFrom());
+        }
+
+        if (s3Service.isResourceExists(to)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Destination is already exists: " + request.getTo());
         }
 
         try {
-            s3.headObject(HeadObjectRequest.builder()
-                    .bucket(s3Properties.getBucket())
-                    .key(to)
-                    .build());
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Destination already exists: " + request.getTo());
-        } catch (NoSuchKeyException e) {
+            createDirectoriesIfNeeded(removeNameFormPath(to));
 
-        }
+            log.info("FileServiceImpl: moveResource.copy: from = {} to = {}", from, to);
+            s3Service.copyObject(from, to);
 
-        System.out.println("FileServiceImpl: moveResource: from = " + from + " to = " + to);
+            log.info("FileServiceImpl: moveResource.delete: from = {} to = {}", from, to);
+            s3Service.deleteObject(from);
 
-        try {
-            CopyObjectRequest objectRequest = CopyObjectRequest.builder()
-                    .sourceBucket(s3Properties.getBucket())
-                    .sourceKey(from)
-                    .destinationBucket(s3Properties.getBucket())
-                    .destinationKey(to)
-                    .build();
-
-            s3.copyObject(objectRequest);
-            s3.deleteObject(DeleteObjectRequest.builder()
-                    .bucket(s3Properties.getBucket())
-                    .key(from)
-                    .build()
-            );
-
-            Long size = s3.headObject(HeadObjectRequest.builder()
-                            .bucket(s3Properties.getBucket())
-                            .key(to)
-                            .build())
-                    .contentLength();
+            Long size = s3Service.getObject(to).getContentLength();
 
             return ResourceResponseDTO.builder()
                     .path(extractPathFromKey(to))
@@ -385,105 +339,41 @@ public class FileServiceImpl implements FileService {
     }
 
     @Override
-    public DownloadResourceResponseDTO download(ResourceRequestDTO request) {
+    public DownloadResourceResponseDTO downloadResource(ResourceRequestDTO request) {
         User user = request.getUser();
         String path = request.getPath();
         String key = addUserPrefix(user.getId(), path);
 
-        byte[] data;
+        S3ObjectMetadata metadata;
         String filename = extractNameFromKey(key);
+        if (filename.isEmpty()) {
+            filename = user.getUsername();
+        }
         ResourceType type = ResourceType.FILE;
-        if (isDirectory(key)) {
-            filename += ".zip";
-            data = zipDirectory(key);
-            type = ResourceType.DIRECTORY;
-        } else {
-            data = downloadFile(key);
-        }
-
-        return DownloadResourceResponseDTO.builder()
-                .filename(filename)
-                .data(data)
-                .resourceType(type)
-                .build();
-    }
-
-    private byte[] downloadFile(String key) {
-        System.out.println("FileServiceImpl: downloadFile: key = " + key);
-
-        GetObjectRequest getObjectRequest = GetObjectRequest.builder()
-                .bucket(s3Properties.getBucket())
-                .key(key)
-                .build();
-
-        try (ResponseInputStream<GetObjectResponse> response = s3.getObject(getObjectRequest)) {
-            return response.readAllBytes();
-        } catch (NoSuchKeyException e) {
-            throw new ResourceNotFound(e.getMessage());
-        } catch (IOException | S3Exception e) {
-            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Error while downloading file");
-        }
-    }
-
-    private byte[] zipDirectory(String key) {
-        System.out.println("FileServiceImpl: downloadDirectory: key = " + key);
 
         try {
-            ByteArrayOutputStream baos = new ByteArrayOutputStream();
-            try (ZipOutputStream zos = new ZipOutputStream(baos)) {
-                ListObjectsV2Request listRequest = ListObjectsV2Request.builder()
-                        .bucket(s3Properties.getBucket())
-                        .prefix(key)
-                        .build();
-
-                ListObjectsV2Response response = s3.listObjectsV2(listRequest);
-
-                for (S3Object o : response.contents()) {
-                    String name = o.key().substring(key.length());
-
-                    if (name.isEmpty()) continue;
-
-                    GetObjectRequest getObjectRequest = GetObjectRequest.builder()
-                            .bucket(s3Properties.getBucket())
-                            .key(o.key())
-                            .build();
-
-                    try (ResponseInputStream<GetObjectResponse> s3Object = s3.getObject(getObjectRequest)) {
-                        zos.putNextEntry(new ZipEntry(name));
-                        s3Object.transferTo(zos);
-                        zos.closeEntry();
-                    }
+            if (s3Service.isDirectory(key)) {
+                if (!key.endsWith("/")) {
+                    key += '/';
                 }
-            }
-            return baos.toByteArray();
-        } catch (NoSuchKeyException e) {
-            throw new ResourceNotFound(e.getMessage());
-        } catch (S3Exception | IOException e) {
-            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Error while downloading file");
-        }
-    }
-
-    private boolean isDirectory(String key) {
-        try {
-            if (!key.endsWith("/")) {
-                s3.headObject(HeadObjectRequest.builder()
-                        .bucket(s3Properties.getBucket())
-                        .key(key)
-                        .build());
-                return false;
+                log.info("FileServiceImpl: downloadDirectory: key = {}", key);
+                filename += ".zip";
+                metadata = s3Service.downloadDirectory(key);
+                type = ResourceType.DIRECTORY;
+            } else {
+                log.info("FileServiceImpl: downloadFile: key = {}", key);
+                metadata = s3Service.downloadObject(key);
             }
 
-            ListObjectsV2Response list = s3.listObjectsV2(ListObjectsV2Request.builder()
-                    .bucket(s3Properties.getBucket())
-                    .prefix(key)
-                    .maxKeys(1)
-                    .build());
-
-            return !list.contents().isEmpty();
+            return DownloadResourceResponseDTO.builder()
+                    .filename(filename)
+                    .data(metadata.getData())
+                    .resourceType(type)
+                    .build();
         } catch (NoSuchKeyException e) {
-            throw new ResourceNotFound(e.getMessage());
+            throw new ResourceNotFound(path);
         } catch (S3Exception e) {
-            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Error while downloading resource");
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Error while downloading file");
         }
     }
 
@@ -506,17 +396,16 @@ public class FileServiceImpl implements FileService {
     }
 
     private String extractPathFromKey(String key) {
-        if (!key.contains("/")) {
-            return "/"; // это root
+        key = key.substring(key.indexOf("/") + 1);
+
+        if (key.endsWith("/")) {
+            key = key.substring(0, key.length() - 1);
         }
 
         int lastSlash = key.lastIndexOf('/');
-        String rawPath = key.substring(0, lastSlash + 1); // включая слэш
+        String rawPath = key.substring(0, lastSlash + 1);
 
-        // Убираем префикс пользователя (например, "user-9-files/")
-        String cleaned = rawPath.replaceFirst("^user-\\d+-files/", "");
-
-        return cleaned.isEmpty() ? "/" : "/" + cleaned;
+        return rawPath.isEmpty() ? "/" : "/" + rawPath;
     }
 
     private String removeNameFormPath(String path) {
@@ -530,10 +419,5 @@ public class FileServiceImpl implements FileService {
 
         int lastSlash = path.lastIndexOf('/');
         return path.substring(0, lastSlash + 1);
-    }
-
-    private String removePrefixFromKey(Long userId, String key) {
-        String prefix = String.format(pathPrefixFormat, userId);
-        return key.substring(prefix.length());
     }
 }

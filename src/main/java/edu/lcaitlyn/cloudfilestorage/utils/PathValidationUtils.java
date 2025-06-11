@@ -13,11 +13,14 @@ public class PathValidationUtils {
         if (path == null || path.trim().isEmpty()) return false;
         if (path.equals("/")) return true;
 
-        Pattern pattern = Pattern.compile("(^//|//|\\.{2}|\\\\)");
+        // Отклоняем //, .., \\, . как отдельный сегмент, ?, и *
+        Pattern pattern = Pattern.compile(
+                "(^//|//|\\.{2}|\\\\|(^|/)\\.(?:/|$)|[?*\"<>|:%\b\n\r\t])"
+        );
         return !pattern.matcher(path).find();
     }
 
-    public static String validateResourcePath(String path) {
+    public static String validateResourcePath(String path) throws IllegalArgumentException {
         if (!isValidPath(path)) {
             throw new IllegalArgumentException("Invalid path: " + path);
         }
@@ -36,10 +39,17 @@ public class PathValidationUtils {
 
         path = path.trim().replace("\\", "/");
 
+        // Проверяем на запрещённые символы (например: *, ?, #, %, .., .)
+        Pattern unsafePattern = Pattern.compile("[*?#%]|(^|/)\\.\\.?(/|$)");
+        if (unsafePattern.matcher(path).find()) {
+            throw new IllegalArgumentException("Invalid path: " + path);
+        }
+
+        // Удаляем пустые части и нормализуем
         String[] parts = path.split("/");
         List<String> cleaned = new ArrayList<>();
         for (String part : parts) {
-            if (part.isEmpty() || part.equals(".") || part.equals("..")) continue;
+            if (part.isEmpty()) continue;
             cleaned.add(part);
         }
 
@@ -47,9 +57,10 @@ public class PathValidationUtils {
             return "/";
         }
 
-        String lastPart = cleaned.get(cleaned.size() - 1);
+        // Проверка: последний сегмент не должен быть файлом
+        String lastPart = cleaned.getLast();
         if (lastPart.contains(".")) {
-            throw new IllegalArgumentException("Path must refer to a directory, not a file:" + path);
+            throw new IllegalArgumentException("Path must refer to a directory, not a file: " + path);
         }
 
         return "/" + String.join("/", cleaned) + "/";

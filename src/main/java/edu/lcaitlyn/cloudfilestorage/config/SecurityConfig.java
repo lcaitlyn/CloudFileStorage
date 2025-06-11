@@ -1,5 +1,7 @@
 package edu.lcaitlyn.cloudfilestorage.config;
 
+import edu.lcaitlyn.cloudfilestorage.config.handler.CustomAccessDeniedHandler;
+import edu.lcaitlyn.cloudfilestorage.config.handler.CustomAuthenticationEntryPoint;
 import lombok.AllArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -20,17 +22,25 @@ public class SecurityConfig {
 
     private final UserDetailsService userDetailsService;
 
+    private final CustomAuthenticationEntryPoint authenticationEntryPoint;
+
+    private final CustomAccessDeniedHandler accessDeniedHandler;
+
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
-                .csrf().disable()   // todo включить в будущем
+                .csrf().disable()
+                .exceptionHandling(
+                        ex -> ex
+                                .authenticationEntryPoint(authenticationEntryPoint)
+                                .accessDeniedHandler(accessDeniedHandler)
+                )
                 .authorizeHttpRequests(authz -> authz
                         .requestMatchers(
                                 "/auth/**",
                                 "/swagger-ui/**",
                                 "/v3/api-docs/**",
-                                "/swagger-resources/**",
-                                "/user/me"
+                                "/swagger-resources/**"
                         ).permitAll()
                         .anyRequest().authenticated()
                 )
