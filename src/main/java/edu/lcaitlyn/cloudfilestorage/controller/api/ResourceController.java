@@ -8,7 +8,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 @RestController
-@RequestMapping("/resource")
+@RequestMapping("/api/resource")
 public interface ResourceController {
     @GetMapping
     ResponseEntity<?> getResource(
@@ -18,7 +18,7 @@ public interface ResourceController {
 
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     ResponseEntity<?> uploadResource(
-            @RequestPart("files") MultipartFile[] files,
+            @RequestPart("object") MultipartFile[] files,
             @RequestParam String path,
             @AuthenticationPrincipal AuthUserDetails userDetails
     );

@@ -6,7 +6,7 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
-@RequestMapping("/directory")
+@RequestMapping("/api/directory")
 public interface DirectoryController {
     @GetMapping
     ResponseEntity<?> getDirectory(@RequestParam String path, @AuthenticationPrincipal AuthUserDetails userDetails);

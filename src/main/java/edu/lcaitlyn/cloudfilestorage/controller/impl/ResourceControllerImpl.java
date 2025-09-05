@@ -24,7 +24,6 @@ import org.springframework.web.multipart.MultipartFile;
 import java.util.List;
 
 @RestController
-@RequestMapping("/resource")
 @AllArgsConstructor
 public class ResourceControllerImpl implements ResourceController {
 
@@ -47,7 +46,7 @@ public class ResourceControllerImpl implements ResourceController {
 
     @Override
     public ResponseEntity<?> uploadResource(
-            @RequestPart("files") MultipartFile[] files,
+            @RequestPart("object") MultipartFile[] files,
             @RequestParam String path,
             @AuthenticationPrincipal AuthUserDetails userDetails) {
         path = PathValidationUtils.validateDirectoryPath(path);
@@ -67,6 +66,10 @@ public class ResourceControllerImpl implements ResourceController {
             @RequestParam String path,
             @AuthenticationPrincipal AuthUserDetails userDetails) {
         path = PathValidationUtils.validateResourcePath(path);
+
+        if (path.isEmpty() || path.equals("/")) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).build();
+        }
 
         fileService.deleteResource(ResourceRequestDTO.builder()
                 .path(path)

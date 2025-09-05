@@ -1,6 +1,6 @@
 package edu.lcaitlyn.cloudfilestorage.enums;
 
-public enum ResourceType {
+public enum Type {
     FILE,
     DIRECTORY,
 }

@@ -19,6 +19,8 @@ public interface FileService {
 
     ResourceResponseDTO createDirectory(ResourceRequestDTO request);
 
+    void createRootDirectory(ResourceRequestDTO request);
+
     void deleteResource(ResourceRequestDTO request);
 
     List<ResourceResponseDTO> findResource(ResourceRequestDTO request);

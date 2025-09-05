@@ -59,6 +59,7 @@ public class AuthControllerImpl implements AuthController {
     }
 
     // todo сделать проверку на логин, чтобы он был не меньше 5 символов и прочее. все еще не работает
+    // todo сделать чтобы логинило после входа сразу
     @Override
     public ResponseEntity<?> register(@Valid @RequestBody UserRequestDTO dto) {
         userService.save(new User(dto.getUsername(), dto.getPassword()));
@@ -68,9 +69,8 @@ public class AuthControllerImpl implements AuthController {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
 
-        fileService.createDirectory(ResourceRequestDTO.builder()
+        fileService.createRootDirectory(ResourceRequestDTO.builder()
                 .user(user.get())
-                .path("/")
                 .build()
         );
 

@@ -26,6 +26,8 @@ services:
       - postgres
       - redis
       - minio
+    networks:
+      cloudnetwork:
 
   postgres:
     image: postgres:17
@@ -37,6 +39,8 @@ services:
       - "5432:5432"
     volumes:
       - postgres-data-storage:/var/lib/postgresql/data
+    networks:
+      cloudnetwork:
 
   redis:
     image: redis:8
@@ -46,6 +50,8 @@ services:
     volumes:
       - redis-data-storage:/data
     command: ["redis-server", "--appendonly", "yes"]
+    networks:
+      cloudnetwork:
 
   minio:
     image: minio/minio
@@ -59,4 +65,18 @@ services:
       - "9001:9001"
     volumes:
       - minio-data-storage:/data
+    networks:
+      cloudnetwork:
 
+  frontend:
+    build: ./cloud-storage-frontend
+    container_name: cloud-storage-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - cloudfilestorage
+    networks:
+      cloudnetwork:
+
+networks:
+  cloudnetwork:

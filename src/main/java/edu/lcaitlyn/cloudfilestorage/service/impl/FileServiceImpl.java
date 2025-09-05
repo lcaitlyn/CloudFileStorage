@@ -5,7 +5,7 @@ import edu.lcaitlyn.cloudfilestorage.DTO.request.MoveResourceRequestDTO;
 import edu.lcaitlyn.cloudfilestorage.DTO.request.ResourceRequestDTO;
 import edu.lcaitlyn.cloudfilestorage.DTO.response.DownloadResourceResponseDTO;
 import edu.lcaitlyn.cloudfilestorage.DTO.response.ResourceResponseDTO;
-import edu.lcaitlyn.cloudfilestorage.enums.ResourceType;
+import edu.lcaitlyn.cloudfilestorage.enums.Type;
 import edu.lcaitlyn.cloudfilestorage.exception.DirectoryNotFound;
 import edu.lcaitlyn.cloudfilestorage.exception.ResourceNotFound;
 import edu.lcaitlyn.cloudfilestorage.models.User;
@@ -25,6 +25,7 @@ import java.util.ArrayList;
 import java.util.Deque;
 import java.util.List;
 
+// todo     Починить path. Вообще какая-то хуевая логика у тебя по сути
 @Slf4j
 @Service
 @AllArgsConstructor
@@ -44,13 +45,13 @@ public class FileServiceImpl implements FileService {
             log.info("FileServiceImpl: getFile: path = {} key = {}", path, key);
             S3ObjectMetadata response = s3Service.getObject(key);
 
-            ResourceType type = s3Service.isDirectory(key) ? ResourceType.DIRECTORY : ResourceType.FILE;
+            Type type = s3Service.isDirectory(key) ? Type.DIRECTORY : Type.FILE;
 
             return ResourceResponseDTO.builder()
                     .path(extractPathFromKey(key))
                     .name(extractNameFromKey(key))
                     .size(response.getContentLength())
-                    .resourceType(type)
+                    .type(type)
                     .build();
         } catch (NoSuchKeyException e) {
             throw new ResourceNotFound(extractNameFromKey(key));
@@ -99,7 +100,7 @@ public class FileServiceImpl implements FileService {
                         .path(path)
                         .name(file.getOriginalFilename())
                         .size(file.getSize())
-                        .resourceType(ResourceType.FILE)
+                        .type(Type.FILE)
                         .build()
                 );
             }
@@ -117,7 +118,11 @@ public class FileServiceImpl implements FileService {
         String prefix = addUserPrefix(user.getId(), path);
 
         if (!s3Service.isDirectory(prefix)) {
-            throw new DirectoryNotFound(extractNameFromKey(path));
+            if (path.isEmpty() || path.equals("/")) {
+                createRootDirectory(request);
+            } else {
+                throw new DirectoryNotFound(extractNameFromKey(path));
+            }
         }
 
         try {
@@ -130,8 +135,8 @@ public class FileServiceImpl implements FileService {
 
                 response.add(ResourceResponseDTO.builder()
                         .name(relativePath)
-                        .path(extractPathFromKey(relativePath))
-                        .resourceType(ResourceType.DIRECTORY)
+                        .path(path)
+                        .type(Type.DIRECTORY)
                         .build()
                 );
             }
@@ -146,9 +151,9 @@ public class FileServiceImpl implements FileService {
 
                 response.add(ResourceResponseDTO.builder()
                         .name(relativePath)
-                        .path(extractPathFromKey(relativePath))
+                        .path(path)
                         .size(file.size())
-                        .resourceType(ResourceType.FILE)
+                        .type(Type.FILE)
                         .build()
                 );
             }
@@ -176,7 +181,7 @@ public class FileServiceImpl implements FileService {
             return ResourceResponseDTO.builder()
                     .path(removeNameFormPath(path))
                     .name(extractNameFromKey(path) + "/")
-                    .resourceType(ResourceType.DIRECTORY)
+                    .type(Type.DIRECTORY)
                     .build();
         } catch (S3Exception e) {
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to create directory: " + path);
@@ -201,6 +206,20 @@ public class FileServiceImpl implements FileService {
             String dirToCreate = stack.pop();
             log.info("FileServiceImpl: createDirectory: prefix = {}", dirToCreate);
             s3Service.createDirectory(dirToCreate);
+        }
+    }
+
+    @Override
+    public void createRootDirectory(ResourceRequestDTO request) {
+        User user = request.getUser();
+
+        String prefix = addUserPrefix(user.getId(), "/");
+
+        try {
+            log.info("FileServiceImpl: createRootDirectory: prefix = {}", prefix);
+            s3Service.createDirectory(prefix);
+        } catch (S3Exception e) {
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to create directory: " + prefix);
         }
     }
 
@@ -261,7 +280,7 @@ public class FileServiceImpl implements FileService {
                     response.add(ResourceResponseDTO.builder()
                             .path(extractPathFromKey(key))
                             .name(name)
-                            .resourceType(ResourceType.DIRECTORY)
+                            .type(Type.DIRECTORY)
                             .build());
                 }
 
@@ -276,9 +295,9 @@ public class FileServiceImpl implements FileService {
                             .name(name);
 
                     if (key.endsWith("/") && o.size() == 0) {
-                        builder.resourceType(ResourceType.DIRECTORY);
+                        builder.type(Type.DIRECTORY);
                     } else {
-                        builder.resourceType(ResourceType.FILE)
+                        builder.type(Type.FILE)
                                 .size(o.size());
                     }
 
@@ -295,6 +314,8 @@ public class FileServiceImpl implements FileService {
         }
     }
 
+
+    // todo:    Сделать чтобы работало с папками
     @Override
     public ResourceResponseDTO moveResource(MoveResourceRequestDTO request) {
         User user = request.getUser();
@@ -330,7 +351,7 @@ public class FileServiceImpl implements FileService {
             return ResourceResponseDTO.builder()
                     .path(extractPathFromKey(to))
                     .name(extractNameFromKey(to))
-                    .resourceType(ResourceType.FILE)
+                    .type(Type.FILE)
                     .size(size)
                     .build();
         } catch (S3Exception e) {
@@ -349,7 +370,7 @@ public class FileServiceImpl implements FileService {
         if (filename.isEmpty()) {
             filename = user.getUsername();
         }
-        ResourceType type = ResourceType.FILE;
+        Type type = Type.FILE;
 
         try {
             if (s3Service.isDirectory(key)) {
@@ -359,7 +380,7 @@ public class FileServiceImpl implements FileService {
                 log.info("FileServiceImpl: downloadDirectory: key = {}", key);
                 filename += ".zip";
                 metadata = s3Service.downloadDirectory(key);
-                type = ResourceType.DIRECTORY;
+                type = Type.DIRECTORY;
             } else {
                 log.info("FileServiceImpl: downloadFile: key = {}", key);
                 metadata = s3Service.downloadObject(key);
@@ -368,7 +389,7 @@ public class FileServiceImpl implements FileService {
             return DownloadResourceResponseDTO.builder()
                     .filename(filename)
                     .data(metadata.getData())
-                    .resourceType(type)
+                    .type(type)
                     .build();
         } catch (NoSuchKeyException e) {
             throw new ResourceNotFound(path);
