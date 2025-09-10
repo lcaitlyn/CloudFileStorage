@@ -1,4 +1,4 @@
-package edu.lcaitlyn.cloudfilestorage.DTO.response;
+package edu.lcaitlyn.cloudfilestorage.DTO;
 
 import edu.lcaitlyn.cloudfilestorage.enums.Type;
 import lombok.Builder;
@@ -6,8 +6,9 @@ import lombok.Data;
 
 @Data
 @Builder
-public class DownloadResourceResponseDTO {
+public class DownloadResourceDTO {
     String filename;
-    byte [] data;
+    String key;
+    byte[] data;
     Type type;
 }

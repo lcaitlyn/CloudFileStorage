@@ -1,408 +1,246 @@
 package edu.lcaitlyn.cloudfilestorage.service.impl;
 
-import edu.lcaitlyn.cloudfilestorage.DTO.S3ObjectMetadata;
+import edu.lcaitlyn.cloudfilestorage.DTO.DownloadResourceDTO;
+import edu.lcaitlyn.cloudfilestorage.DTO.ResourceMetadata;
+import edu.lcaitlyn.cloudfilestorage.DTO.StorageDTO;
 import edu.lcaitlyn.cloudfilestorage.DTO.request.MoveResourceRequestDTO;
 import edu.lcaitlyn.cloudfilestorage.DTO.request.ResourceRequestDTO;
-import edu.lcaitlyn.cloudfilestorage.DTO.response.DownloadResourceResponseDTO;
 import edu.lcaitlyn.cloudfilestorage.DTO.response.ResourceResponseDTO;
 import edu.lcaitlyn.cloudfilestorage.enums.Type;
-import edu.lcaitlyn.cloudfilestorage.exception.DirectoryNotFound;
+import edu.lcaitlyn.cloudfilestorage.exception.ResourceAlreadyExists;
 import edu.lcaitlyn.cloudfilestorage.exception.ResourceNotFound;
-import edu.lcaitlyn.cloudfilestorage.models.User;
+import edu.lcaitlyn.cloudfilestorage.repository.S3Repository;
 import edu.lcaitlyn.cloudfilestorage.service.FileService;
-import edu.lcaitlyn.cloudfilestorage.service.S3Service;
+import edu.lcaitlyn.cloudfilestorage.service.StorageManager;
 import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
-import software.amazon.awssdk.services.s3.model.*;
 
 import java.io.IOException;
-import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Deque;
 import java.util.List;
 
 // todo     Починить path. Вообще какая-то хуевая логика у тебя по сути
+
+// todo     Починить одинаковые имена (если папка 123 уже есть и ты загружаешь файл 123, то он загрузиться). Исправить в upload в move
+
+// todo     Сделать нормальное логирование ошибок. Тип кто че замутил и хули пошло не так
 @Slf4j
 @Service
 @AllArgsConstructor
 public class FileServiceImpl implements FileService {
 
-    private final String pathPrefixFormat = "user-%d-files";
+    private final String KEY_PREFIX = "user-%d-files";
 
-    private final S3Service s3Service;
+    private final StorageManager storageManager;
 
     @Override
     public ResourceResponseDTO getResource(ResourceRequestDTO request) {
-        User user = request.getUser();
-        String path = request.getPath();
-        String key = addUserPrefix(user.getId(), path);
+        String key = createKey(request.getUser().getId(), request.getPath());
 
-        try {
-            log.info("FileServiceImpl: getFile: path = {} key = {}", path, key);
-            S3ObjectMetadata response = s3Service.getObject(key);
+        StorageDTO resource = storageManager.getResourceMetadata(key);
 
-            Type type = s3Service.isDirectory(key) ? Type.DIRECTORY : Type.FILE;
-
-            return ResourceResponseDTO.builder()
-                    .path(extractPathFromKey(key))
-                    .name(extractNameFromKey(key))
-                    .size(response.getContentLength())
-                    .type(type)
-                    .build();
-        } catch (NoSuchKeyException e) {
+        if (resource == null) {
             throw new ResourceNotFound(extractNameFromKey(key));
-        } catch (S3Exception e) {
-            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Error while getting resource", e);
         }
+
+        return ResourceResponseDTO.builder()
+                .path(extractPathFromKey(key))
+                .name(extractNameFromKey(key))
+                .size(resource.getSize())
+                .type(resource.getType())
+                .build();
     }
 
     // todo Сделать чтобы при одинаковых названиях файлов, все четенько работало, если нет 409
     //                                      (11.06 обновил)
+    // todo Затестить будет ли он загружать папку в которой есть другие папки
     @Override
     public List<ResourceResponseDTO> uploadFile(ResourceRequestDTO request) {
-        User user = request.getUser();
-        String path = request.getPath();
+        String prefix = createKey(request.getUser().getId(), request.getPath());
         MultipartFile[] files = request.getFiles();
 
-        String prefix = addUserPrefix(user.getId(), path);
-
-        try {
-            for (MultipartFile file : files) {
-                String key = prefix + file.getOriginalFilename();
-                if (s3Service.isResourceExists(key)) {
-                    throw new ResponseStatusException(HttpStatus.CONFLICT, "File '" + file.getOriginalFilename() + "' is already exists.");
-                }
+        for (MultipartFile file : files) {
+            String key = prefix + file.getOriginalFilename();
+            if (storageManager.exists(key) || storageManager.isDirectory(key + "/")) {
+                throw new ResourceAlreadyExists(file.getOriginalFilename());
             }
+        }
 
-            createDirectoriesIfNeeded(prefix);
+        List<ResourceResponseDTO> response = new ArrayList<>();
+        for (MultipartFile file : files) {
+            String key = prefix + file.getOriginalFilename();
+            try {
+                storageManager.save(key, file.getBytes(), file.getContentType());
+                log.info("User [" + request.getUser().getUsername() + "] uploaded file " + request.getPath() + file.getOriginalFilename());
 
-            List<ResourceResponseDTO> response = new ArrayList<>();
-
-            for (MultipartFile file : files) {
-                String key = prefix + file.getOriginalFilename();
-
-                try {
-                    log.info("FileServiceImpl: uploadFile: key = {}{}", prefix, file.getOriginalFilename());
-                    s3Service.putObject(key, S3ObjectMetadata.builder()
-                            .contentType(file.getContentType())
-                            .data(file.getBytes())
-                            .build()
-                    );
-                } catch (IOException e) {
-                    throw new ResponseStatusException(HttpStatus.CONFLICT, "Failed to upload file. Error with getting bytes.");
-                }
-
+                StorageDTO resource = storageManager.getResourceMetadata(key);
                 response.add(ResourceResponseDTO.builder()
-                        .path(path)
-                        .name(file.getOriginalFilename())
-                        .size(file.getSize())
-                        .type(Type.FILE)
+                        .path(request.getPath())
+                        .name(resource.getKey().substring(prefix.length()))
+                        .size(resource.getSize())
+                        .type(resource.getType())
                         .build()
                 );
+            } catch (IOException e) {
+                throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to upload file '" + file.getOriginalFilename() + "'. Error reading bytes from input.");
             }
-            return response;
-        } catch (S3Exception e) {
-            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Error while uploading file");
         }
+        return response;
     }
 
     @Override
     public List<ResourceResponseDTO> getDirectory(ResourceRequestDTO request) {
-        User user = request.getUser();
-        String path = request.getPath();
+        String prefix = createKey(request.getUser().getId(), request.getPath());
 
-        String prefix = addUserPrefix(user.getId(), path);
+        List<StorageDTO> resources = storageManager.getDirectory(prefix);
 
-        if (!s3Service.isDirectory(prefix)) {
-            if (path.isEmpty() || path.equals("/")) {
-                createRootDirectory(request);
-            } else {
-                throw new DirectoryNotFound(extractNameFromKey(path));
-            }
-        }
-
-        try {
-            List<ResourceResponseDTO> response = new ArrayList<>();
-
-            log.info("FileServiceImpl: getDirectory: path = {}, prefix = {}", path, prefix);
-            List<String> directories = s3Service.listDirectories(prefix);
-            for (String directory : directories) {
-                String relativePath = directory.substring(prefix.length());
-
-                response.add(ResourceResponseDTO.builder()
-                        .name(relativePath)
-                        .path(path)
-                        .type(Type.DIRECTORY)
-                        .build()
-                );
-            }
-
-            List<S3Object> files = s3Service.listObjects(prefix);
-            for (S3Object file : files) {
-                String fullKey = file.key();
-                if (fullKey.equals(prefix)) continue;
-
-                String relativePath = fullKey.substring(prefix.length());
-                if (relativePath.contains("/")) continue;
-
-                response.add(ResourceResponseDTO.builder()
-                        .name(relativePath)
-                        .path(path)
-                        .size(file.size())
-                        .type(Type.FILE)
-                        .build()
-                );
-            }
-
-            return response;
-        } catch (S3Exception e) {
-            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Error while getting objects");
-        }
+        return resources.stream().map(r -> ResourceResponseDTO.builder()
+                .name(r.getKey().substring(prefix.length()))
+                .path(request.getPath())
+                .size(r.getSize())
+                .type(r.getType())
+                .build()
+        ).toList();
     }
 
     @Override
     public ResourceResponseDTO createDirectory(ResourceRequestDTO request) {
-        User user = request.getUser();
-        String path = request.getPath();
+        String prefix = createKey(request.getUser().getId(), request.getPath());
 
-        String prefix = addUserPrefix(user.getId(), path);
-
-        if (s3Service.isResourceExists(prefix)) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Directory '" + path + "' is already exists.");
+        if (storageManager.exists(prefix)) {
+            throw new ResourceAlreadyExists(extractNameFromKey(prefix));
         }
 
-        try {
-            createDirectoriesIfNeeded(prefix);
-
-            return ResourceResponseDTO.builder()
-                    .path(removeNameFormPath(path))
-                    .name(extractNameFromKey(path) + "/")
-                    .type(Type.DIRECTORY)
-                    .build();
-        } catch (S3Exception e) {
-            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to create directory: " + path);
+        if (request.getPath().length() != 1 && storageManager.exists(prefix.substring(0, prefix.length() - 1))) {
+            throw new ResourceAlreadyExists(extractNameFromKey(prefix));
         }
+
+        storageManager.createDirectory(prefix);
+        return getResource(request);
     }
 
-    private void createDirectoriesIfNeeded(String key) {
-        if (!key.endsWith("/")) {
-            key += "/";
-        }
-
-        key = key.substring(0, key.length() - 1);
-
-        Deque<String> stack = new ArrayDeque<>();
-
-        while (key.contains("/") && !s3Service.isResourceExists(key + "/")) {
-            stack.push(key + "/");
-            key = key.substring(0, key.lastIndexOf("/"));
-        }
-
-        while (!stack.isEmpty()) {
-            String dirToCreate = stack.pop();
-            log.info("FileServiceImpl: createDirectory: prefix = {}", dirToCreate);
-            s3Service.createDirectory(dirToCreate);
-        }
-    }
-
-    @Override
-    public void createRootDirectory(ResourceRequestDTO request) {
-        User user = request.getUser();
-
-        String prefix = addUserPrefix(user.getId(), "/");
-
-        try {
-            log.info("FileServiceImpl: createRootDirectory: prefix = {}", prefix);
-            s3Service.createDirectory(prefix);
-        } catch (S3Exception e) {
-            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to create directory: " + prefix);
-        }
-    }
-
+    // todo Сделать проверку на то что нельзя удалять root
     @Override
     public void deleteResource(ResourceRequestDTO request) {
-        User user = request.getUser();
-        String path = request.getPath();
-        String prefix = addUserPrefix(user.getId(), path);
+        String prefix = createKey(request.getUser().getId(), request.getPath());
 
-        try {
-            if (prefix.endsWith("/")) {
-                boolean isDir = s3Service.isDirectory(prefix);
-                if (!isDir) {
-                    throw new DirectoryNotFound(extractNameFromKey(path));
-                }
-
-                log.info("FileServiceImpl: deleteDirectory: path = {}, prefix = {}", path, prefix);
-                s3Service.deleteDirectory(prefix);
-            } else {
-                if (!s3Service.isFileExist(prefix)) {
-                    throw new ResourceNotFound(extractNameFromKey(path));
-                }
-
-                boolean isDir = s3Service.isDirectory(prefix);
-                if (isDir) {
-                    log.info("FileServiceImpl: deleteDirectory (no trailing slash): path = {}, prefix = {}", path, prefix);
-                    s3Service.deleteDirectory(prefix);
-                } else {
-                    log.info("FileServiceImpl: deleteFile: path = {}, prefix = {}", path, prefix);
-                    s3Service.deleteObject(prefix);
-                }
-            }
-        } catch (S3Exception e) {
-            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Error while deleting resource");
+        if (!storageManager.exists(prefix)) {
+            throw new ResourceNotFound(extractNameFromKey(request.getPath()));
         }
+        storageManager.delete(prefix);
+        log.info("User [" + request.getUser().getUsername() + "] deleted file " + request.getPath());
     }
 
     @Override
-    public List<ResourceResponseDTO> findResource(ResourceRequestDTO request) {
-        User user = request.getUser();
-        String query = request.getPath().toLowerCase();
-        String prefix = addUserPrefix(user.getId(), "/");
-
+    public List<ResourceResponseDTO> findResource(ResourceRequestDTO request, String query) {
+        String prefix = createKey(request.getUser().getId(), "/");
         List<ResourceResponseDTO> response = new ArrayList<>();
-        String continuationToken = null;
 
-        try {
-            while (true) {
-                log.info("FileServiceImpl: findResource: path = {}, query = {}", prefix, query);
-                ListObjectsV2Response objectv2Response = s3Service.listAllObjects(prefix, continuationToken);
-
-                for (CommonPrefix cp : objectv2Response.commonPrefixes()) {
-                    String key = cp.prefix();
-                    String name = extractNameFromKey(key);
-
-                    if (!name.toLowerCase().contains(query)) continue;
-
-                    response.add(ResourceResponseDTO.builder()
-                            .path(extractPathFromKey(key))
-                            .name(name)
-                            .type(Type.DIRECTORY)
-                            .build());
-                }
-
-                for (S3Object o : objectv2Response.contents()) {
-                    String key = o.key();
-                    String name = extractNameFromKey(key);
-
-                    if (!name.toLowerCase().contains(query)) continue;
-
-                    ResourceResponseDTO.ResourceResponseDTOBuilder builder = ResourceResponseDTO.builder()
-                            .path(extractPathFromKey(key))
-                            .name(name);
-
-                    if (key.endsWith("/") && o.size() == 0) {
-                        builder.type(Type.DIRECTORY);
-                    } else {
-                        builder.type(Type.FILE)
-                                .size(o.size());
-                    }
-
-                    response.add(builder.build());
-                }
-
-                if (!objectv2Response.isTruncated()) break;
-                continuationToken = objectv2Response.nextContinuationToken();
+        List<StorageDTO> resources = storageManager.getFullDirectory(prefix);
+        for (StorageDTO r : resources) {
+            if (r.getKey().substring(prefix.length()).contains(query)) {
+                response.add(ResourceResponseDTO.builder()
+                        .path(extractPathFromKey(r.getKey()))
+                        .name(extractNameFromKey(r.getKey()))
+                        .size(r.getSize())
+                        .type(r.getType())
+                        .build());
             }
-
-            return response;
-        } catch (S3Exception e) {
-            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Error while getting objects");
         }
+
+        return response;
     }
 
-
-    // todo:    Сделать чтобы работало с папками
+    // todo:    Сделать чтобы не работала с root
     @Override
     public ResourceResponseDTO moveResource(MoveResourceRequestDTO request) {
-        User user = request.getUser();
-        String from = request.getFrom();
-        String to = request.getTo();
+        String from = createKey(request.getUser().getId(), request.getFrom());
+        String to = createKey(request.getUser().getId(), request.getTo());
 
-        from = addUserPrefix(user.getId(), from);
-        to = addUserPrefix(user.getId(), to);
-
-        if (from.endsWith("/") || to.endsWith("/")) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Should not ends with '/': from =" + request.getFrom() + ", to = " + request.getTo());
+        if (!storageManager.exists(from)) {
+            throw new ResourceNotFound(extractNameFromKey(request.getFrom()));
         }
 
-        if (!s3Service.isFileExist(from)) {
-            throw new ResourceNotFound(request.getFrom());
+        if (storageManager.exists(to)) {
+            throw new ResourceAlreadyExists(extractNameFromKey(request.getTo()));
         }
 
-        if (s3Service.isResourceExists(to)) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Destination is already exists: " + request.getTo());
+        storageManager.move(from, to);
+        StorageDTO resource = storageManager.getResourceMetadata(to);
+
+        if (resource == null) {
+            throw new ResourceNotFound(extractNameFromKey(request.getTo()));
         }
 
-        try {
-            createDirectoriesIfNeeded(removeNameFormPath(to));
+        return ResourceResponseDTO.builder()
+                .name(extractNameFromKey(resource.getKey()))
+                .path(extractPathFromKey(resource.getKey()))
+                .size(resource.getSize())
+                .type(resource.getType())
+                .build();
+    }
 
-            log.info("FileServiceImpl: moveResource.copy: from = {} to = {}", from, to);
-            s3Service.copyObject(from, to);
-
-            log.info("FileServiceImpl: moveResource.delete: from = {} to = {}", from, to);
-            s3Service.deleteObject(from);
-
-            Long size = s3Service.getObject(to).getContentLength();
-
-            return ResourceResponseDTO.builder()
-                    .path(extractPathFromKey(to))
-                    .name(extractNameFromKey(to))
-                    .type(Type.FILE)
-                    .size(size)
-                    .build();
-        } catch (S3Exception e) {
-            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Error while moving resource");
+    private String createDownloadName(String path, String username, Type type) {
+        if (path.startsWith("/")) {
+            path = path.substring(1);
         }
+
+        if (path.isEmpty()) {
+            return username;
+        }
+
+        if (type == Type.DIRECTORY) {
+            if (path.endsWith("/")) {
+                path = path.substring(0, path.length() - 1);
+            }
+            return path.substring(path.lastIndexOf("/") + 1);
+        }
+
+        return path.substring(path.lastIndexOf("/") + 1);
     }
 
     @Override
-    public DownloadResourceResponseDTO downloadResource(ResourceRequestDTO request) {
-        User user = request.getUser();
-        String path = request.getPath();
-        String key = addUserPrefix(user.getId(), path);
+    public DownloadResourceDTO downloadResource(ResourceRequestDTO request) {
+        String key = createKey(request.getUser().getId(), request.getPath());
 
-        S3ObjectMetadata metadata;
-        String filename = extractNameFromKey(key);
-        if (filename.isEmpty()) {
-            filename = user.getUsername();
+        StorageDTO resource = storageManager.getResourceMetadata(key);
+
+        if (resource == null) {
+            throw new ResourceNotFound(extractNameFromKey(request.getPath()));
         }
-        Type type = Type.FILE;
 
-        try {
-            if (s3Service.isDirectory(key)) {
-                if (!key.endsWith("/")) {
-                    key += '/';
-                }
-                log.info("FileServiceImpl: downloadDirectory: key = {}", key);
-                filename += ".zip";
-                metadata = s3Service.downloadDirectory(key);
-                type = Type.DIRECTORY;
-            } else {
-                log.info("FileServiceImpl: downloadFile: key = {}", key);
-                metadata = s3Service.downloadObject(key);
-            }
+        ResourceMetadata metadata;
+        String filename = createDownloadName(request.getPath(), request.getUser().getUsername(), resource.getType());
 
-            return DownloadResourceResponseDTO.builder()
-                    .filename(filename)
-                    .data(metadata.getData())
-                    .type(type)
-                    .build();
-        } catch (NoSuchKeyException e) {
-            throw new ResourceNotFound(path);
-        } catch (S3Exception e) {
-            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Error while downloading file");
+        if (resource.getType() == Type.DIRECTORY) {
+            metadata = storageManager.downloadFolder(resource.getKey(), filename);
+            filename += ".zip";
+            log.info("User [" + request.getUser().getUsername() + "] downloaded directory " + request.getPath() + filename);
+        } else {
+            metadata = storageManager.downloadFile(key);
+            log.info("User [" + request.getUser().getUsername() + "] downloaded file " + request.getPath() + filename);
         }
+
+        return DownloadResourceDTO.builder()
+                .filename(filename)
+                .type(resource.getType())
+                .data(metadata.getData())
+                .type(resource.getType())
+                .build();
     }
 
-    private String addUserPrefix(Long userId, String path) {
-        String prefix = String.format(pathPrefixFormat, userId);
+
+    // todo снести в UtilsClass
+    private String createKey(Long userId, String path) {
+        String prefix = String.format(KEY_PREFIX, userId);
         return prefix + path;
     }
 
+    // todo снести в UtilsClass
     private String extractNameFromKey(String key) {
         if (key.endsWith("/")) {
             key = key.substring(0, key.length() - 1);
@@ -416,6 +254,7 @@ public class FileServiceImpl implements FileService {
         return key.substring(lastSlash + 1);
     }
 
+    // todo снести в UtilsClass
     private String extractPathFromKey(String key) {
         key = key.substring(key.indexOf("/") + 1);
 
@@ -429,6 +268,7 @@ public class FileServiceImpl implements FileService {
         return rawPath.isEmpty() ? "/" : "/" + rawPath;
     }
 
+    // todo снести в UtilsClass
     private String removeNameFormPath(String path) {
         if (path.endsWith("/")) {
             path = path.substring(0, path.length() - 1);

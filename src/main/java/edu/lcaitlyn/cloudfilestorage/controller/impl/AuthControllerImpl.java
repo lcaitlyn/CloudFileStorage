@@ -35,6 +35,10 @@ public class AuthControllerImpl implements AuthController {
 
     @Override
     public ResponseEntity<?> login(@RequestBody UserRequestDTO dto, HttpSession session) {
+        if (!isCredentialsValid(dto.getUsername(), dto.getPassword())) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).build();
+        }
+
         Optional<User> user = userService.authenticate(dto.getUsername(), dto.getPassword());
         if (user.isEmpty()) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
@@ -58,10 +62,12 @@ public class AuthControllerImpl implements AuthController {
         return ResponseEntity.ok(responseDTO);
     }
 
-    // todo сделать проверку на логин, чтобы он был не меньше 5 символов и прочее. все еще не работает
-    // todo сделать чтобы логинило после входа сразу
     @Override
-    public ResponseEntity<?> register(@Valid @RequestBody UserRequestDTO dto) {
+    public ResponseEntity<?> register(@Valid @RequestBody UserRequestDTO dto, HttpSession session) {
+        if (!isCredentialsValid(dto.getUsername(), dto.getPassword())) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).build();
+        }
+
         userService.save(new User(dto.getUsername(), dto.getPassword()));
 
         Optional<User> user = userService.findByUsername(dto.getUsername());
@@ -69,10 +75,13 @@ public class AuthControllerImpl implements AuthController {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
 
-        fileService.createRootDirectory(ResourceRequestDTO.builder()
+        fileService.createDirectory(ResourceRequestDTO.builder()
                 .user(user.get())
+                .path("/")
                 .build()
         );
+
+        login(dto, session);
 
         UserResponseDTO responseDTO = UserResponseDTO.builder().username(dto.getUsername()).build();
         return ResponseEntity.status(HttpStatus.CREATED).body(responseDTO);
@@ -83,5 +92,25 @@ public class AuthControllerImpl implements AuthController {
         SecurityContextHolder.clearContext();
         session.removeAttribute(HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY);
         return ResponseEntity.status(HttpStatus.NO_CONTENT).build();
+    }
+
+    private boolean isCredentialsValid(String username, String password) {
+        if (username == null || password == null) {
+            return false;
+        }
+
+        if (username.isEmpty() || password.isEmpty()) {
+            return false;
+        }
+
+        if (username.length() < 5 || username.length() > 20) {
+            return false;
+        }
+
+        if (password.length() < 5 || password.length() > 20) {
+            return false;
+        }
+
+        return true;
     }
 }

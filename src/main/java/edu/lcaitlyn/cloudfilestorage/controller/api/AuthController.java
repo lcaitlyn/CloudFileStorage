@@ -16,7 +16,7 @@ public interface AuthController {
     ResponseEntity<?> login(@RequestBody UserRequestDTO dto, HttpSession session);
 
     @PostMapping("/sign-up")
-    ResponseEntity<?> register(@Valid @RequestBody UserRequestDTO dto);
+    ResponseEntity<?> register(@Valid @RequestBody UserRequestDTO dto, HttpSession session);
 
     @PostMapping("/sign-out")
     ResponseEntity<?> logout(HttpSession session);

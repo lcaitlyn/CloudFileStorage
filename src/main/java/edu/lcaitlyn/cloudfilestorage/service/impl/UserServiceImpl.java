@@ -6,6 +6,7 @@ import edu.lcaitlyn.cloudfilestorage.models.User;
 import edu.lcaitlyn.cloudfilestorage.repository.UserRepository;
 import edu.lcaitlyn.cloudfilestorage.service.UserService;
 import lombok.AllArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -13,6 +14,7 @@ import org.springframework.stereotype.Service;
 import java.util.List;
 import java.util.Optional;
 
+@Slf4j
 @Service
 @AllArgsConstructor
 public class UserServiceImpl implements UserService {
@@ -29,6 +31,8 @@ public class UserServiceImpl implements UserService {
         String password = passwordEncoder.encode(user.getPassword());
         user.setPassword(password);
         userRepository.save(user);
+
+        log.info("User have been registred : " + user.getUsername());
     }
 
     @Override
@@ -57,6 +61,8 @@ public class UserServiceImpl implements UserService {
         if (!passwordEncoder.matches(password, user.get().getPassword())) {
             throw new BadCredentialsException("Password does not match.");
         }
+
+        log.info("User authenticated : " + username);
 
         return user;
     }

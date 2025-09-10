@@ -9,6 +9,6 @@ import org.springframework.web.multipart.MultipartFile;
 @Builder
 public class ResourceRequestDTO {
     User user;
-    MultipartFile [] files;
+    MultipartFile[] files;
     String path;
 }

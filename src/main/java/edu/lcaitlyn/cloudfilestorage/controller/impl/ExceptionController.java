@@ -1,10 +1,8 @@
 package edu.lcaitlyn.cloudfilestorage.controller.impl;
 
-import edu.lcaitlyn.cloudfilestorage.exception.DirectoryNotFound;
-import edu.lcaitlyn.cloudfilestorage.exception.ResourceNotFound;
-import edu.lcaitlyn.cloudfilestorage.exception.UserAlreadyExist;
-import edu.lcaitlyn.cloudfilestorage.exception.UserNotFoundException;
+import edu.lcaitlyn.cloudfilestorage.exception.*;
 import edu.lcaitlyn.cloudfilestorage.utils.ErrorResponseUtils;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.BadCredentialsException;
@@ -20,55 +18,66 @@ import java.io.FileNotFoundException;
 import java.util.HashMap;
 import java.util.Map;
 
+@Slf4j
 @ControllerAdvice
 public class ExceptionController {
     @ExceptionHandler
     public ResponseEntity<?> handleUserNotFoundException(UserNotFoundException ex) {
+        log.error("User not found: {}", ex.getMessage());
         return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("message", ex.getMessage()));
     }
 
     @ExceptionHandler
     public ResponseEntity<?> handeBadCredentialsException(BadCredentialsException ex) {
+        log.error("Bad Credentials: {}", ex.getMessage());
         return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("message", ex.getMessage()));
     }
 
     @ExceptionHandler
     public ResponseEntity<?> handeUserAlreadyExistException(UserAlreadyExist ex) {
+        log.error("User Already Exists: {}", ex.getMessage());
         return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("message", ex.getMessage()));
     }
 
     @ExceptionHandler
     public ResponseEntity<?> handeUsernameNotFoundException(UsernameNotFoundException ex) {
+        log.error("Username Not Found: {}", ex.getMessage());
         return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("message", ex.getMessage()));
     }
 
     @ExceptionHandler
     public ResponseEntity<?> handleIllegalArgumentException(IllegalArgumentException ex) {
+        log.error("Illegal Argument: {}", ex.getMessage());
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of("message", ex.getMessage()));
     }
 
     @ExceptionHandler
     public ResponseEntity<?> handeNoSuchKeyException(NoSuchKeyException ex) {
+        log.error(ex.getMessage());
         return ErrorResponseUtils.print(ex.getMessage(), HttpStatus.NOT_FOUND);
     }
 
     @ExceptionHandler
     public ResponseEntity<?> handleFileNotFoundException(FileNotFoundException ex) {
+        log.error(ex.getMessage());
         return ErrorResponseUtils.print(ex.getMessage(), HttpStatus.NOT_FOUND);
     }
 
     @ExceptionHandler
     public ResponseEntity<?> handleDirectoryNotFoundException(DirectoryNotFound ex) {
+        log.error(ex.getMessage());
         return ErrorResponseUtils.print(ex.getMessage(), HttpStatus.NOT_FOUND);
     }
 
     @ExceptionHandler
     public ResponseEntity<?> handeResponseStatusException(ResponseStatusException ex) {
+        log.error(ex.getMessage());
         return ErrorResponseUtils.print(ex.getReason(), ex.getStatusCode());
     }
 
     @ExceptionHandler
     public ResponseEntity<?> handeResourceNotFoundException(ResourceNotFound ex) {
+        log.error(ex.getMessage());
         return ErrorResponseUtils.print(ex.getMessage(), HttpStatus.NOT_FOUND);
     }
 
@@ -78,11 +87,25 @@ public class ExceptionController {
         ex.getBindingResult().getFieldErrors().forEach(error ->
                 errors.put(error.getField(), error.getDefaultMessage())
         );
+        log.error(ex.getMessage());
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errors);
     }
 
     @ExceptionHandler(MaxUploadSizeExceededException.class)
     public ResponseEntity<?> handleMaxUploadSizeExceededException(MaxUploadSizeExceededException ex) {
+        log.error(ex.getMessage());
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of("message", "Resource size should not be larger than 1MB!"));
+    }
+
+    @ExceptionHandler(StorageException.class)
+    public ResponseEntity<?> handleStorageException(StorageException ex) {
+        log.error("Storage error: {}", ex.getMessage(), ex);
+        return ErrorResponseUtils.print(ex.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+
+    @ExceptionHandler(ResourceAlreadyExists.class)
+    public ResponseEntity<?> handleResourceAlreadyExistsException(ResourceAlreadyExists ex) {
+        log.error("Resource already exists: {}", ex.getMessage(), ex);
+        return ErrorResponseUtils.print(ex.getMessage(), HttpStatus.CONFLICT);
     }
 }
