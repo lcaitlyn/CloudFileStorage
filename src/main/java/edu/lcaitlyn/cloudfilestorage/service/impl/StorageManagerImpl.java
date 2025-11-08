@@ -149,7 +149,7 @@ public class StorageManagerImpl implements StorageManager {
                 builder.append(dir).append("/");
 
                 String curDir = builder.toString();
-                if (!exists(curDir)) {
+                if (!isDirectory(curDir)) {
                     s3Repository.createDirectory(curDir);
                     log.info("createdDirectory: " + curDir);
                 }
@@ -160,51 +160,79 @@ public class StorageManagerImpl implements StorageManager {
     }
 
     @Override
-    public void delete(String key) {
+    public void deleteFile(String key) {
         try {
-            boolean isDirectory = isDirectory(key);
-
-            if (isDirectory) {
-                s3Repository.deleteDirectory(key);
-                log.info("deleted directory key: " + key);
-            } else {
-                s3Repository.deleteObject(key);
-                log.info("deleted object key: " + key);
-            }
+            s3Repository.deleteObject(key);
+            log.info("deleted object key: " + key);
         } catch (S3Exception e) {
             throw new StorageException("Error while deleting key: " + key, e);
         }
     }
 
     @Override
-    public void copy(String sourceKey, String targetKey) {
+    public void deleteDirectory(String key) {
         try {
-            createDirectory(targetKey);
-
-            if (isDirectory(sourceKey)) {
-                List<S3Object> objects = s3Repository.listAllObjects(sourceKey);
-                for (S3Object obj : objects) {
-                    if (obj.key().equals(sourceKey)) continue;
-
-                    String destination = targetKey + obj.key().substring(sourceKey.length());
-                    s3Repository.copyObject(obj.key(), destination);
-                    log.info("copied key: " + obj.key() + " to target key: " + destination);
-                }
-            } else {
-                s3Repository.copyObject(sourceKey, targetKey);
-                log.info("copied key: " + sourceKey + " to target key: " + targetKey);
+            List<S3Object> objects = s3Repository.listAllObjects(key);
+            for (S3Object obj : objects) {
+                s3Repository.deleteObject(obj.key());
+                log.info("deleted key: " + obj.key());
             }
         } catch (S3Exception e) {
-            throw new StorageException("Error while copying key: " + sourceKey, e);
+            throw new StorageException("Error while deleting key: " + key, e);
+        }
+    }
+
+//    todo разбить на 2 метода -> copyFile, copyFolder. Проверка на папку должна происходить в FileService
+
+    //    todo Тут вся логика неправильная
+//    Мы должны сперва насоздавать папки когда копируем и туда раскидать файлы, потому что
+    @Override
+    public void copyFile(String sourceKey, String targetKey) {
+        try {
+            createDirectory(targetKey);
+            s3Repository.copyObject(sourceKey, targetKey);
+            log.info("copied key: " + sourceKey + " to target key: " + targetKey);
+        } catch (S3Exception e) {
+            throw new StorageException("Error while copying file. Key: " + sourceKey, e);
         }
     }
 
     @Override
-    public void move(String sourceKey, String targetKey) {
+    public void copyDirectory(String sourceKey, String targetKey) {
         try {
-            copy(sourceKey, targetKey);
-            delete(sourceKey);
+            createDirectory(targetKey);
+
+            List<S3Object> objects = s3Repository.listAllObjects(sourceKey);
+            for (S3Object obj : objects) {
+                String destination = targetKey + obj.key().substring(sourceKey.length());
+                if (destination.endsWith("/")) {
+                    createDirectory(destination);
+                } else {
+                    copyFile(obj.key(), destination);
+                }
+            }
+        } catch (S3Exception e) {
+            throw new StorageException("Error while copying directory. Key: " + sourceKey, e);
+        }
+    }
+
+    @Override
+    public void moveFile(String sourceKey, String targetKey) {
+        try {
+            copyFile(sourceKey, targetKey);
+            deleteFile(sourceKey);
             log.info("moved key: " + sourceKey + " to target key: " + targetKey);
+        } catch (S3Exception e) {
+            throw new StorageException("Error while moving key: " + sourceKey, e);
+        }
+    }
+
+    @Override
+    public void moveDirectory(String sourceKey, String targetKey) {
+        try {
+            copyDirectory(sourceKey, targetKey);
+            deleteDirectory(sourceKey);
+            log.info("moved directory with key: " + sourceKey + " to target directory with key: " + targetKey);
         } catch (S3Exception e) {
             throw new StorageException("Error while moving key: " + sourceKey, e);
         }
@@ -236,7 +264,7 @@ public class StorageManagerImpl implements StorageManager {
     }
 
     @Override
-    public ResourceMetadata downloadFolder(String key, String folderName) {
+    public ResourceMetadata downloadDirectory(String key, String directoryName) {
         if (!isDirectory(key)) {
             throw new StorageException("Error while downloading folder with key. No such directory: " + key);
         }
@@ -252,7 +280,7 @@ public class StorageManagerImpl implements StorageManager {
                 if (name.isEmpty() || o.key().equals(key)) continue;
 
                 try (ResponseInputStream<GetObjectResponse> rIS = s3Repository.downloadObject(o.key())) {
-                    zos.putNextEntry(new ZipEntry(folderName + "/" + name));
+                    zos.putNextEntry(new ZipEntry(directoryName + "/" + name));
                     rIS.transferTo(zos);
                     zos.closeEntry();
                 }

@@ -7,10 +7,7 @@ import edu.lcaitlyn.cloudfilestorage.DTO.request.MoveResourceRequestDTO;
 import edu.lcaitlyn.cloudfilestorage.DTO.request.ResourceRequestDTO;
 import edu.lcaitlyn.cloudfilestorage.DTO.response.ResourceResponseDTO;
 import edu.lcaitlyn.cloudfilestorage.enums.Type;
-import edu.lcaitlyn.cloudfilestorage.exception.DirectoryNotFound;
-import edu.lcaitlyn.cloudfilestorage.exception.FileServiceException;
-import edu.lcaitlyn.cloudfilestorage.exception.ResourceAlreadyExists;
-import edu.lcaitlyn.cloudfilestorage.exception.ResourceNotFound;
+import edu.lcaitlyn.cloudfilestorage.exception.*;
 import edu.lcaitlyn.cloudfilestorage.service.FileService;
 import edu.lcaitlyn.cloudfilestorage.service.StorageManager;
 import lombok.AllArgsConstructor;
@@ -67,7 +64,7 @@ public class FileServiceImpl implements FileService {
 
         for (MultipartFile file : files) {
             String key = prefix + file.getOriginalFilename();
-            if (storageManager.exists(key) || storageManager.isDirectory(key + "/")) {
+            if (storageManager.exists(key)) {
                 log.warn("User [{}] unsuccessfully uploaded resource with path = {}: resource already exists.", request.getUser().getUsername(), request.getPath());
                 throw new ResourceAlreadyExists(file.getOriginalFilename());
             }
@@ -116,16 +113,16 @@ public class FileServiceImpl implements FileService {
         ).toList();
     }
 
+//    todo
+//    Если мы создаем папку с именем существуещего файла, то выскакивает ошибка
+//    User [string] unsuccessfully created directory with path = /c/123/. Directory already exists
+//    Resource already exists: Resource 123 already exists
+
     @Override
     public ResourceResponseDTO createDirectory(ResourceRequestDTO request) {
         String prefix = createKey(request.getUser().getId(), request.getPath());
 
-        if (storageManager.exists(prefix)) {
-            log.warn("User [{}] unsuccessfully created directory with path = {}. Directory already exists", request.getUser().getUsername(), request.getPath());
-            throw new ResourceAlreadyExists(extractNameFromKey(prefix));
-        }
-
-        if (request.getPath().length() != 1 && storageManager.exists(prefix.substring(0, prefix.length() - 1))) {
+        if (storageManager.isDirectory(prefix)) {
             log.warn("User [{}] unsuccessfully created directory with path = {}. Directory already exists", request.getUser().getUsername(), request.getPath());
             throw new ResourceAlreadyExists(extractNameFromKey(prefix));
         }
@@ -139,18 +136,28 @@ public class FileServiceImpl implements FileService {
     public void deleteResource(ResourceRequestDTO request) {
         String prefix = createKey(request.getUser().getId(), request.getPath());
 
-        if (!storageManager.exists(prefix)) {
-            log.warn("User [{}] unsuccessfully deleted resource = {}. Resource not found", request.getUser().getUsername(), request.getPath());
-            throw new ResourceNotFound(extractNameFromKey(request.getPath()));
-        }
+        if (prefix.endsWith("/")) {
+            if (!storageManager.isDirectory(prefix)) {
+                log.warn("User [{}] unsuccessfully deleted directory = {}. Resource not found", request.getUser().getUsername(), request.getPath());
+                throw new DirectoryNotFound(extractNameFromKey(request.getPath()));
+            }
 
-        if (isRootPath(request.getPath())) {
-            log.warn("User [{}] unsuccessfully deleted resource = {}. Can not delete root directory", request.getUser().getUsername(), request.getPath());
-            throw new FileServiceException("Can not delete root directory");
-        }
+            if (isRootPath(request.getPath())) {
+                log.warn("User [{}] unsuccessfully deleted resource = {}. Can not delete root directory", request.getUser().getUsername(), request.getPath());
+                throw new FileServiceException("Can not delete root directory");
+            }
 
-        storageManager.delete(prefix);
-        log.info("User [{}] deleted resource: {}", request.getUser().getUsername(), request.getPath());
+            storageManager.deleteDirectory(prefix);
+            log.info("User [{}] deleted directory: {}", request.getUser().getUsername(), request.getPath());
+        } else {
+            if (!storageManager.exists(prefix)) {
+                log.warn("User [{}] unsuccessfully deleted resource = {}. Resource not found", request.getUser().getUsername(), request.getPath());
+                throw new ResourceNotFound(extractNameFromKey(request.getPath()));
+            }
+
+            storageManager.deleteFile(prefix);
+            log.info("User [{}] deleted resource: {}", request.getUser().getUsername(), request.getPath());
+        }
     }
 
     @Override
@@ -183,33 +190,59 @@ public class FileServiceImpl implements FileService {
 
     // todo сделать проверку на повторение файлов. допустим есть файл 123 и в эту папку прилетит новая папка 123/. Сделать исключение
     // todo сделать проверку на то что родительскую нельзя закинуть в дочернюю
+
+//   todo закинул файл "2" в папку "2/". В папке "2/" получил "2/2/" (папку 2, вместо файла 2)
+//    copied key: user-11-files/z/ to target key: user-11-files/z/z/ ошибка тут в копировании
+
+//    когда перемещаем папку: /folder/ -> /folder/folder2/
+//    когда перемещаем файл: /file -> /folder/file
+
+//    todo сделать проверки чтобы родительскую в дочернюю нельзя было кидать
+
     @Override
     public ResourceResponseDTO moveResource(MoveResourceRequestDTO request) {
         if (isRootPath(request.getFrom()) || isRootPath(request.getTo())) {
-            log.warn("User [{}] unsuccessfully moved resource: from = {} to = {}. Can not delete root directory", request.getUser().getUsername(), request.getTo(), request.getFrom());
+            log.warn("User [{}] unsuccessfully moved resource: from = {} to = {}. Can not move from or to root folder", request.getUser().getUsername(), request.getTo(), request.getFrom());
             throw new FileServiceException("Can not move root directory");
         }
 
         String from = createKey(request.getUser().getId(), request.getFrom());
         String to = createKey(request.getUser().getId(), request.getTo());
 
-        if (!storageManager.exists(from)) {
-            log.warn("User [{}] unsuccessfully moved resource: from = {} to = {}. Source resource is not exists", request.getUser().getUsername(), request.getTo(), request.getFrom());
-            throw new ResourceNotFound(extractNameFromKey(request.getFrom()));
+        if (from.endsWith("/")) {
+            if (!storageManager.isDirectory(from)) {
+                log.warn("User [{}] unsuccessfully moved resource: from = {} to = {}. Source directory does not exists", request.getUser().getUsername(), request.getTo(), request.getFrom());
+                throw new DirectoryNotFound(extractNameFromKey(request.getFrom()));
+            }
+
+            if (storageManager.isDirectory(to)) {
+                log.warn("User [{}] unsuccessfully moved directory: from = {} to = {}. Target directory is already exists", request.getUser().getUsername(), request.getTo(), request.getFrom());
+                throw new DirectoryAlreadyExists(extractNameFromKey(request.getTo()));
+            }
+
+            storageManager.moveDirectory(from, to);
+            log.info("User [{}] moved directory: from = {}; to = {}", request.getUser().getUsername(), request.getFrom(), request.getTo());
+        } else {
+            if (!storageManager.exists(from)) {
+                log.warn("User [{}] unsuccessfully moved resource: from = {} to = {}. Source resource is not exists", request.getUser().getUsername(), request.getTo(), request.getFrom());
+                throw new ResourceNotFound(extractNameFromKey(request.getFrom()));
+            }
+
+            if (storageManager.exists(to)) {
+                log.warn("User [{}] unsuccessfully moved resource: from = {} to = {}. Target resource is already exists", request.getUser().getUsername(), request.getTo(), request.getFrom());
+                throw new ResourceAlreadyExists(extractNameFromKey(request.getTo()));
+            }
+
+            storageManager.moveFile(from, to);
+            log.info("User [{}] moved resource: from = {}; to = {}", request.getUser().getUsername(), request.getFrom(), request.getTo());
         }
 
-        if (storageManager.exists(to)) {
-            log.warn("User [{}] unsuccessfully moved resource: from = {} to = {}. Target resource is already exists", request.getUser().getUsername(), request.getTo(), request.getFrom());
-            throw new ResourceAlreadyExists(extractNameFromKey(request.getTo()));
-        }
-
-
-        storageManager.move(from, to);
-        log.info("User [{}] moved resource: from = {}; to = {}", request.getUser().getUsername(), request.getFrom(), request.getTo());
         StorageDTO resource = storageManager.getResourceMetadata(to);
 
+        String type = (to.endsWith("/")) ? "directory" : "resource";
         if (resource == null) {
-            log.warn("User [{}] unsuccessfully get resource with path = {}. Resource not found", request.getUser().getUsername(), request.getTo());
+            log.warn("User [{}] unsuccessfully get {} with path = {}. Not found", type, request.getUser().getUsername(), request.getTo());
+            if (type.charAt(0) == 'd') throw new DirectoryNotFound(extractNameFromKey(request.getTo()));
             throw new ResourceNotFound(extractNameFromKey(request.getTo()));
         }
 
@@ -236,7 +269,7 @@ public class FileServiceImpl implements FileService {
         String filename = createDownloadName(request.getPath(), request.getUser().getUsername(), resource.getType());
 
         if (resource.getType() == Type.DIRECTORY) {
-            metadata = storageManager.downloadFolder(resource.getKey(), filename);
+            metadata = storageManager.downloadDirectory(resource.getKey(), filename);
             filename += ".zip";
             log.info("User [{}] downloaded directory: {}", request.getUser().getUsername(), request.getPath() + filename);
         } else {

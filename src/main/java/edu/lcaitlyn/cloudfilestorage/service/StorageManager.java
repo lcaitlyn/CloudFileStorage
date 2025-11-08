@@ -23,13 +23,19 @@ public interface StorageManager {
 
     void createDirectory(String key);
 
-    void delete(String key);
+    void deleteFile(String key);
 
-    void copy(String sourceKey, String targetKey);
+    void deleteDirectory(String key);
 
-    void move(String sourceKey, String targetKey);
+    void copyFile(String sourceKey, String targetKey);
+
+    void copyDirectory(String sourceKey, String targetKey);
+
+    void moveFile(String sourceKey, String targetKey);
+
+    void moveDirectory(String sourceKey, String targetKey);
 
     ResourceMetadata downloadFile(String key);
 
-    ResourceMetadata downloadFolder(String key, String folderName);
+    ResourceMetadata downloadDirectory(String key, String directoryName);
 }

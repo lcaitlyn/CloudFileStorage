@@ -1,6 +1,6 @@
 package edu.lcaitlyn.cloudfilestorage.service.impl;
 
-import edu.lcaitlyn.cloudfilestorage.exception.UserAlreadyExist;
+import edu.lcaitlyn.cloudfilestorage.exception.UserAlreadyExists;
 import edu.lcaitlyn.cloudfilestorage.exception.UserNotFoundException;
 import edu.lcaitlyn.cloudfilestorage.models.User;
 import edu.lcaitlyn.cloudfilestorage.repository.UserRepository;
@@ -25,7 +25,7 @@ public class UserServiceImpl implements UserService {
     @Override
     public void save(User user) {
         if (findByUsername(user.getUsername()).isPresent()) {
-            throw new UserAlreadyExist("Username " + user.getUsername() + " already exist");
+            throw new UserAlreadyExists("Username " + user.getUsername() + " already exist");
         }
 
         String password = passwordEncoder.encode(user.getPassword());

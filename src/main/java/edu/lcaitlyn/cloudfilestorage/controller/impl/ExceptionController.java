@@ -34,7 +34,7 @@ public class ExceptionController {
     }
 
     @ExceptionHandler
-    public ResponseEntity<?> handeUserAlreadyExistException(UserAlreadyExist ex) {
+    public ResponseEntity<?> handeUserAlreadyExistException(UserAlreadyExists ex) {
         log.error("User Already Exists: {}", ex.getMessage());
         return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("message", ex.getMessage()));
     }
@@ -106,6 +106,12 @@ public class ExceptionController {
     @ExceptionHandler(ResourceAlreadyExists.class)
     public ResponseEntity<?> handleResourceAlreadyExistsException(ResourceAlreadyExists ex) {
         log.error("Resource already exists: {}", ex.getMessage(), ex);
+        return ErrorResponseUtils.print(ex.getMessage(), HttpStatus.CONFLICT);
+    }
+
+    @ExceptionHandler(DirectoryAlreadyExists.class)
+    public ResponseEntity<?> handleResourceAlreadyExistsException(DirectoryAlreadyExists ex) {
+        log.error("Directory already exists: {}", ex.getMessage(), ex);
         return ErrorResponseUtils.print(ex.getMessage(), HttpStatus.CONFLICT);
     }
 
