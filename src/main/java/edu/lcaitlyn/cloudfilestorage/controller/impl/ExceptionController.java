@@ -53,19 +53,19 @@ public class ExceptionController {
 
     @ExceptionHandler
     public ResponseEntity<?> handeNoSuchKeyException(NoSuchKeyException ex) {
-        log.error(ex.getMessage());
+        log.error("No Such Key: {}", ex.getMessage());
         return ErrorResponseUtils.print(ex.getMessage(), HttpStatus.NOT_FOUND);
     }
 
     @ExceptionHandler
     public ResponseEntity<?> handleFileNotFoundException(FileNotFoundException ex) {
-        log.error(ex.getMessage());
+        log.error("File Not Found: {}", ex.getMessage());
         return ErrorResponseUtils.print(ex.getMessage(), HttpStatus.NOT_FOUND);
     }
 
     @ExceptionHandler
     public ResponseEntity<?> handleDirectoryNotFoundException(DirectoryNotFound ex) {
-        log.error(ex.getMessage());
+        log.error("Directory Not Found: {}", ex.getMessage());
         return ErrorResponseUtils.print(ex.getMessage(), HttpStatus.NOT_FOUND);
     }
 
@@ -77,7 +77,7 @@ public class ExceptionController {
 
     @ExceptionHandler
     public ResponseEntity<?> handeResourceNotFoundException(ResourceNotFound ex) {
-        log.error(ex.getMessage());
+        log.error("Resource Not Found: {}", ex.getMessage());
         return ErrorResponseUtils.print(ex.getMessage(), HttpStatus.NOT_FOUND);
     }
 
@@ -106,6 +106,12 @@ public class ExceptionController {
     @ExceptionHandler(ResourceAlreadyExists.class)
     public ResponseEntity<?> handleResourceAlreadyExistsException(ResourceAlreadyExists ex) {
         log.error("Resource already exists: {}", ex.getMessage(), ex);
+        return ErrorResponseUtils.print(ex.getMessage(), HttpStatus.CONFLICT);
+    }
+
+    @ExceptionHandler(FileServiceException.class)
+    public ResponseEntity<?> handeFileServiceException(FileServiceException ex) {
+        log.error("File Service Exception: {}", ex.getMessage(), ex);
         return ErrorResponseUtils.print(ex.getMessage(), HttpStatus.CONFLICT);
     }
 }

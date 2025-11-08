@@ -7,9 +7,10 @@ import edu.lcaitlyn.cloudfilestorage.DTO.request.MoveResourceRequestDTO;
 import edu.lcaitlyn.cloudfilestorage.DTO.request.ResourceRequestDTO;
 import edu.lcaitlyn.cloudfilestorage.DTO.response.ResourceResponseDTO;
 import edu.lcaitlyn.cloudfilestorage.enums.Type;
+import edu.lcaitlyn.cloudfilestorage.exception.DirectoryNotFound;
+import edu.lcaitlyn.cloudfilestorage.exception.FileServiceException;
 import edu.lcaitlyn.cloudfilestorage.exception.ResourceAlreadyExists;
 import edu.lcaitlyn.cloudfilestorage.exception.ResourceNotFound;
-import edu.lcaitlyn.cloudfilestorage.repository.S3Repository;
 import edu.lcaitlyn.cloudfilestorage.service.FileService;
 import edu.lcaitlyn.cloudfilestorage.service.StorageManager;
 import lombok.AllArgsConstructor;
@@ -17,23 +18,24 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
-import org.springframework.web.server.ResponseStatusException;
 
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
+import static edu.lcaitlyn.cloudfilestorage.utils.FileServiceUtils.*;
+
 // todo     Починить path. Вообще какая-то хуевая логика у тебя по сути
 
 // todo     Починить одинаковые имена (если папка 123 уже есть и ты загружаешь файл 123, то он загрузиться). Исправить в upload в move
 
-// todo     Сделать нормальное логирование ошибок. Тип кто че замутил и хули пошло не так
+// todo     Имена папок с . не работают (типо не могу создать папку с название 1.txt)
 @Slf4j
 @Service
 @AllArgsConstructor
 public class FileServiceImpl implements FileService {
 
-    private final String KEY_PREFIX = "user-%d-files";
+    public static final String KEY_PREFIX = "user-%d-files";
 
     private final StorageManager storageManager;
 
@@ -44,6 +46,7 @@ public class FileServiceImpl implements FileService {
         StorageDTO resource = storageManager.getResourceMetadata(key);
 
         if (resource == null) {
+            log.warn("User [{}] unsuccessfully get resource with path = {}. Resource not found", request.getUser().getUsername(), request.getPath());
             throw new ResourceNotFound(extractNameFromKey(key));
         }
 
@@ -57,7 +60,6 @@ public class FileServiceImpl implements FileService {
 
     // todo Сделать чтобы при одинаковых названиях файлов, все четенько работало, если нет 409
     //                                      (11.06 обновил)
-    // todo Затестить будет ли он загружать папку в которой есть другие папки
     @Override
     public List<ResourceResponseDTO> uploadFile(ResourceRequestDTO request) {
         String prefix = createKey(request.getUser().getId(), request.getPath());
@@ -66,6 +68,7 @@ public class FileServiceImpl implements FileService {
         for (MultipartFile file : files) {
             String key = prefix + file.getOriginalFilename();
             if (storageManager.exists(key) || storageManager.isDirectory(key + "/")) {
+                log.warn("User [{}] unsuccessfully uploaded resource with path = {}: resource already exists.", request.getUser().getUsername(), request.getPath());
                 throw new ResourceAlreadyExists(file.getOriginalFilename());
             }
         }
@@ -75,7 +78,7 @@ public class FileServiceImpl implements FileService {
             String key = prefix + file.getOriginalFilename();
             try {
                 storageManager.save(key, file.getBytes(), file.getContentType());
-                log.info("User [" + request.getUser().getUsername() + "] uploaded file " + request.getPath() + file.getOriginalFilename());
+                log.info("User [{}] uploaded file: {}", request.getUser().getUsername(), request.getPath() + file.getOriginalFilename());
 
                 StorageDTO resource = storageManager.getResourceMetadata(key);
                 response.add(ResourceResponseDTO.builder()
@@ -86,7 +89,8 @@ public class FileServiceImpl implements FileService {
                         .build()
                 );
             } catch (IOException e) {
-                throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to upload file '" + file.getOriginalFilename() + "'. Error reading bytes from input.");
+                log.error("User [{}] unsuccessfully uploaded resource: {}. IOException : {}", request.getUser().getUsername(), request.getPath() + file.getOriginalFilename(), e.getMessage());
+                throw new FileServiceException(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to upload file '" + file.getOriginalFilename() + "'. Error reading bytes from input.");
             }
         }
         return response;
@@ -95,6 +99,11 @@ public class FileServiceImpl implements FileService {
     @Override
     public List<ResourceResponseDTO> getDirectory(ResourceRequestDTO request) {
         String prefix = createKey(request.getUser().getId(), request.getPath());
+
+        if (!storageManager.exists(prefix) || !storageManager.isDirectory(prefix)) {
+            log.warn("User [{}] unsuccessfully got directory with path = {}. Directory not found", request.getUser().getUsername(), request.getPath());
+            throw new DirectoryNotFound(extractNameFromKey(request.getPath()));
+        }
 
         List<StorageDTO> resources = storageManager.getDirectory(prefix);
 
@@ -112,27 +121,36 @@ public class FileServiceImpl implements FileService {
         String prefix = createKey(request.getUser().getId(), request.getPath());
 
         if (storageManager.exists(prefix)) {
+            log.warn("User [{}] unsuccessfully created directory with path = {}. Directory already exists", request.getUser().getUsername(), request.getPath());
             throw new ResourceAlreadyExists(extractNameFromKey(prefix));
         }
 
         if (request.getPath().length() != 1 && storageManager.exists(prefix.substring(0, prefix.length() - 1))) {
+            log.warn("User [{}] unsuccessfully created directory with path = {}. Directory already exists", request.getUser().getUsername(), request.getPath());
             throw new ResourceAlreadyExists(extractNameFromKey(prefix));
         }
 
         storageManager.createDirectory(prefix);
+        log.info("User [{}] created directory: {}", request.getUser().getUsername(), request.getPath());
         return getResource(request);
     }
 
-    // todo Сделать проверку на то что нельзя удалять root
     @Override
     public void deleteResource(ResourceRequestDTO request) {
         String prefix = createKey(request.getUser().getId(), request.getPath());
 
         if (!storageManager.exists(prefix)) {
+            log.warn("User [{}] unsuccessfully deleted resource = {}. Resource not found", request.getUser().getUsername(), request.getPath());
             throw new ResourceNotFound(extractNameFromKey(request.getPath()));
         }
+
+        if (isRootPath(request.getPath())) {
+            log.warn("User [{}] unsuccessfully deleted resource = {}. Can not delete root directory", request.getUser().getUsername(), request.getPath());
+            throw new FileServiceException("Can not delete root directory");
+        }
+
         storageManager.delete(prefix);
-        log.info("User [" + request.getUser().getUsername() + "] deleted file " + request.getPath());
+        log.info("User [{}] deleted resource: {}", request.getUser().getUsername(), request.getPath());
     }
 
     @Override
@@ -141,8 +159,15 @@ public class FileServiceImpl implements FileService {
         List<ResourceResponseDTO> response = new ArrayList<>();
 
         List<StorageDTO> resources = storageManager.getFullDirectory(prefix);
+        if (resources == null) {
+            log.warn("User [{}] unsuccessfully found resource: {} ; path = {}. Problem with retrieving root directory.", request.getUser().getUsername(), query, request.getPath());
+            throw new FileServiceException("Problem with retrieving root directory");
+        }
+
         for (StorageDTO r : resources) {
-            if (r.getKey().substring(prefix.length()).contains(query)) {
+            String filename = extractNameFromKey(r.getKey());
+
+            if (filename.contains(query)) {
                 response.add(ResourceResponseDTO.builder()
                         .path(extractPathFromKey(r.getKey()))
                         .name(extractNameFromKey(r.getKey()))
@@ -155,24 +180,36 @@ public class FileServiceImpl implements FileService {
         return response;
     }
 
-    // todo:    Сделать чтобы не работала с root
+
+    // todo сделать проверку на повторение файлов. допустим есть файл 123 и в эту папку прилетит новая папка 123/. Сделать исключение
+    // todo сделать проверку на то что родительскую нельзя закинуть в дочернюю
     @Override
     public ResourceResponseDTO moveResource(MoveResourceRequestDTO request) {
+        if (isRootPath(request.getFrom()) || isRootPath(request.getTo())) {
+            log.warn("User [{}] unsuccessfully moved resource: from = {} to = {}. Can not delete root directory", request.getUser().getUsername(), request.getTo(), request.getFrom());
+            throw new FileServiceException("Can not move root directory");
+        }
+
         String from = createKey(request.getUser().getId(), request.getFrom());
         String to = createKey(request.getUser().getId(), request.getTo());
 
         if (!storageManager.exists(from)) {
+            log.warn("User [{}] unsuccessfully moved resource: from = {} to = {}. Source resource is not exists", request.getUser().getUsername(), request.getTo(), request.getFrom());
             throw new ResourceNotFound(extractNameFromKey(request.getFrom()));
         }
 
         if (storageManager.exists(to)) {
+            log.warn("User [{}] unsuccessfully moved resource: from = {} to = {}. Target resource is already exists", request.getUser().getUsername(), request.getTo(), request.getFrom());
             throw new ResourceAlreadyExists(extractNameFromKey(request.getTo()));
         }
 
+
         storageManager.move(from, to);
+        log.info("User [{}] moved resource: from = {}; to = {}", request.getUser().getUsername(), request.getFrom(), request.getTo());
         StorageDTO resource = storageManager.getResourceMetadata(to);
 
         if (resource == null) {
+            log.warn("User [{}] unsuccessfully get resource with path = {}. Resource not found", request.getUser().getUsername(), request.getTo());
             throw new ResourceNotFound(extractNameFromKey(request.getTo()));
         }
 
@@ -180,6 +217,37 @@ public class FileServiceImpl implements FileService {
                 .name(extractNameFromKey(resource.getKey()))
                 .path(extractPathFromKey(resource.getKey()))
                 .size(resource.getSize())
+                .type(resource.getType())
+                .build();
+    }
+
+    @Override
+    public DownloadResourceDTO downloadResource(ResourceRequestDTO request) {
+        String key = createKey(request.getUser().getId(), request.getPath());
+
+        StorageDTO resource = storageManager.getResourceMetadata(key);
+
+        if (resource == null) {
+            log.warn("User [{}] unsuccessfully get resource with path = {}. Resource not found", request.getUser().getUsername(), request.getPath());
+            throw new ResourceNotFound(extractNameFromKey(request.getPath()));
+        }
+
+        ResourceMetadata metadata;
+        String filename = createDownloadName(request.getPath(), request.getUser().getUsername(), resource.getType());
+
+        if (resource.getType() == Type.DIRECTORY) {
+            metadata = storageManager.downloadFolder(resource.getKey(), filename);
+            filename += ".zip";
+            log.info("User [{}] downloaded directory: {}", request.getUser().getUsername(), request.getPath() + filename);
+        } else {
+            metadata = storageManager.downloadFile(key);
+            log.info("User [{}}] downloaded file: {}", request.getUser().getUsername(), request.getPath() + filename);
+        }
+
+        return DownloadResourceDTO.builder()
+                .filename(filename)
+                .type(resource.getType())
+                .data(metadata.getData())
                 .type(resource.getType())
                 .build();
     }
@@ -201,84 +269,5 @@ public class FileServiceImpl implements FileService {
         }
 
         return path.substring(path.lastIndexOf("/") + 1);
-    }
-
-    @Override
-    public DownloadResourceDTO downloadResource(ResourceRequestDTO request) {
-        String key = createKey(request.getUser().getId(), request.getPath());
-
-        StorageDTO resource = storageManager.getResourceMetadata(key);
-
-        if (resource == null) {
-            throw new ResourceNotFound(extractNameFromKey(request.getPath()));
-        }
-
-        ResourceMetadata metadata;
-        String filename = createDownloadName(request.getPath(), request.getUser().getUsername(), resource.getType());
-
-        if (resource.getType() == Type.DIRECTORY) {
-            metadata = storageManager.downloadFolder(resource.getKey(), filename);
-            filename += ".zip";
-            log.info("User [" + request.getUser().getUsername() + "] downloaded directory " + request.getPath() + filename);
-        } else {
-            metadata = storageManager.downloadFile(key);
-            log.info("User [" + request.getUser().getUsername() + "] downloaded file " + request.getPath() + filename);
-        }
-
-        return DownloadResourceDTO.builder()
-                .filename(filename)
-                .type(resource.getType())
-                .data(metadata.getData())
-                .type(resource.getType())
-                .build();
-    }
-
-
-    // todo снести в UtilsClass
-    private String createKey(Long userId, String path) {
-        String prefix = String.format(KEY_PREFIX, userId);
-        return prefix + path;
-    }
-
-    // todo снести в UtilsClass
-    private String extractNameFromKey(String key) {
-        if (key.endsWith("/")) {
-            key = key.substring(0, key.length() - 1);
-        }
-
-        int lastSlash = key.lastIndexOf('/');
-        if (lastSlash < 0) {
-            return ""; // это root-папка, имя пустое
-        }
-
-        return key.substring(lastSlash + 1);
-    }
-
-    // todo снести в UtilsClass
-    private String extractPathFromKey(String key) {
-        key = key.substring(key.indexOf("/") + 1);
-
-        if (key.endsWith("/")) {
-            key = key.substring(0, key.length() - 1);
-        }
-
-        int lastSlash = key.lastIndexOf('/');
-        String rawPath = key.substring(0, lastSlash + 1);
-
-        return rawPath.isEmpty() ? "/" : "/" + rawPath;
-    }
-
-    // todo снести в UtilsClass
-    private String removeNameFormPath(String path) {
-        if (path.endsWith("/")) {
-            path = path.substring(0, path.length() - 1);
-        }
-
-        if (!path.contains("/")) {
-            return "/"; // это root
-        }
-
-        int lastSlash = path.lastIndexOf('/');
-        return path.substring(0, lastSlash + 1);
     }
 }

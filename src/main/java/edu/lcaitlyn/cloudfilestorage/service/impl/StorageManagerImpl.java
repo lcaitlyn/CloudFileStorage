@@ -106,7 +106,7 @@ public class StorageManagerImpl implements StorageManager {
 
             List<S3Object> objects = s3Repository.listAllObjects(key);
             for (S3Object obj : objects) {
-                if (!obj.key().equals(key)) continue;
+                if (obj.key().equals(key)) continue;
 
                 Type type = (obj.key().endsWith("/") && obj.size() == 0 ? Type.DIRECTORY : Type.FILE);
 
@@ -256,6 +256,7 @@ public class StorageManagerImpl implements StorageManager {
                     rIS.transferTo(zos);
                     zos.closeEntry();
                 }
+                log.info("downloaded key: " + o.key());
             }
         } catch (S3Exception | IOException e) {
             throw new StorageException("Error while downloading folder with key: " + key, e);
